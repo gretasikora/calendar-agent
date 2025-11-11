@@ -1,0 +1,18 @@
+# Environment variables
+python-dotenv
+
+# AWS Agent Squad framework
+agent-squad[aws]
+
+# AWS SDK
+boto3
+
+# Google Calendar API
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib
+
+# Date/time utilities for calendar scheduling
+python-dateutil
+pytz
+
