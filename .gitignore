@@ -1,3 +1,5 @@
+# Environment variables
+.env
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
@@ -205,3 +207,6 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# MCP Google (cloned dependency - not version controlled)
+mcp-google/
