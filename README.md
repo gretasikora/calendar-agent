@@ -106,18 +106,60 @@ MCP_USER_ID=user123
 MCP_CALENDAR_EMAIL=your-email@gmail.com
 ```
 
-### 5. Verify Setup
+### 5. Start the Application
+
+The application requires three servers to be running:
+
+**Terminal 1: MCP HTTP Server (Port 3000)**
+```bash
+cd mcp-google
+npm run http-server
+```
+
+**Terminal 2: Flask API Server (Port 5000)**
+```bash
+python api_server.py
+```
+
+**Terminal 3: Frontend Server (Port 8080)**
+```bash
+cd frontend
+python -m http.server 8080
+```
+
+**Access the Application:**
+- Frontend: http://localhost:8080/
+- API: http://localhost:5000/api/
+
+### 6. Verify Setup
 
 ```bash
-# Make sure the MCP HTTP server is running
+# Check MCP server
 curl http://localhost:3000/health
-
 # Should return: {"status":"ok"}
+
+# Check Flask API
+curl http://localhost:5000/api/health
+# Should return: {"status":"ok"}
+
+# Check frontend
+curl http://localhost:8080/
+# Should return: HTML content
 ```
 
 ## Usage
 
-### Interactive Mode
+### Web Interface (Recommended)
+
+1. Open http://localhost:8080/ in your browser
+2. Follow the conversation flow:
+   - Select meeting duration (30 min, 1 hour, or custom)
+   - Enter meeting purpose
+   - Choose meeting type (online or in-person)
+   - Review suggested times and accept/reject
+   - For online meetings, enter your email to receive Google Meet invite
+
+### Interactive Terminal Mode
 
 Run the agent in interactive mode:
 
@@ -153,17 +195,25 @@ asyncio.run(main())
 
 ```
 calendar-agent/
-├── scheduling.py          # Main agent logic
+├── api_server.py         # Flask API server (port 5000)
+├── scheduling.py         # Main agent logic and preferences
+├── preferences.py        # Meeting preference logic
+├── frontend/             # Web interface
+│   ├── index.html        # Main HTML
+│   ├── app.js            # Frontend JavaScript
+│   └── styles.css        # Styling
 ├── demo.py               # Demo script
 ├── requirements.txt      # Python dependencies
 ├── .env                  # Environment variables (not in git)
 ├── MCP_GOOGLE_SETUP.md   # MCP server setup guide
 ├── README.md             # This file
-└── mcp-google/           # MCP server (cloned, not version controlled)
+└── mcp-google/           # MCP server (cloned, not version controlled - ignored in git)
     ├── src/
     │   └── http-server.ts  # HTTP wrapper server
     └── ...
 ```
+
+**Note:** The `mcp-google/` directory is ignored by git (see `.gitignore`). You need to clone and set it up separately following `MCP_GOOGLE_SETUP.md`.
 
 ## How It Works
 

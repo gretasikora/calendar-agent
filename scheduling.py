@@ -3,11 +3,16 @@ import os
 import asyncio
 import json
 import re
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 import datetime
 from dateutil import parser as dateparser
 import aiohttp
 from dotenv import load_dotenv
+from preferences import (
+    is_online_meeting, is_friendly_meeting,
+    suggest_online_times, suggest_inperson_times,
+    get_upcoming_events
+)
 
 # Load environment variables from .env file
 load_dotenv()
@@ -25,6 +30,7 @@ MCP_USER_ID = os.getenv("MCP_USER_ID")
 MCP_CALENDAR_EMAIL = os.getenv("MCP_CALENDAR_EMAIL")  # Calendar email address (optional, defaults to "primary")
 OPENAI_KEY = os.getenv("OPENAI_API_KEY")  # used by OpenAIAgent
 REQUEST_TIMEOUT = 15  # seconds for MCP calls
+
 # ---------------------------
 # MCP helpers
 # ---------------------------
@@ -58,33 +64,25 @@ async def get_primary_calendar_email() -> str:
         }
         result = await mcp_post(payload)
         # Parse the result to find primary calendar
-        # Format: "Calendar Name (calendar-id)" where id can be email or "primary"
         if isinstance(result, dict) and "content" in result:
             content = result["content"]
             if isinstance(content, list) and len(content) > 0:
                 text = content[0].get("text", "") if isinstance(content[0], dict) else str(content[0])
                 lines = text.split("\n")
                 
-                # Try to find primary calendar or use first calendar
                 for line in lines:
                     if not line.strip():
                         continue
-                    # Extract ID from parentheses: "Name (id)"
                     match = re.search(r'\(([^)]+)\)', line)
                     if match:
                         calendar_id = match.group(1)
-                        # If it's an email address, use it
                         if "@" in calendar_id and "." in calendar_id:
                             return calendar_id
-                        # If it's "primary", we'll need to handle it differently
-                        # For now, continue to next calendar
                 
-                # If no email found, try first line anyway (might be "primary")
                 if lines:
                     match = re.search(r'\(([^)]+)\)', lines[0])
                     if match:
                         calendar_id = match.group(1)
-                        # If it's "primary", we can't use it - need actual email
                         if calendar_id.lower() == "primary":
                             raise ValueError("Found 'primary' calendar ID but need actual email address")
                         return calendar_id
@@ -93,54 +91,152 @@ async def get_primary_calendar_email() -> str:
     except Exception as e:
         raise ValueError(f"Failed to get primary calendar email: {e}. Please set MCP_CALENDAR_EMAIL in .env file with your Google account email.")
 
-async def get_freebusy_for_window(start_iso: str, end_iso: str, user_id: str = MCP_USER_ID, calendar_email: str = None) -> dict:
+async def get_events_for_window(start_iso: str, end_iso: str, calendar_email: str = None) -> List[Dict]:
     """
-    Request freebusy from MCP for the given UTC ISO window.
-    
-    Args:
-        start_iso: Start time in ISO format
-        end_iso: End time in ISO format
-        user_id: User ID (optional)
-        calendar_email: Calendar email address. If None, attempts to get from list-calendars or uses MCP_CALENDAR_EMAIL.
+    Get events for a time window using list-events (instead of freebusy).
+    Returns list of event dictionaries.
     """
-    # If no calendar email provided, try to get it
     if calendar_email is None:
         calendar_email = await get_primary_calendar_email()
     
+    # Normalize ISO format to match regex: ^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?(Z|[+-]\d{2}:\d{2})$
+    def normalize_iso(iso_str: str) -> str:
+        """Ensure ISO string matches the MCP server regex pattern."""
+        try:
+            # Parse the datetime
+            dt = dateparser.isoparse(iso_str)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=datetime.timezone.utc)
+            else:
+                dt = dt.astimezone(datetime.timezone.utc)
+            
+            # Format as: YYYY-MM-DDTHH:MM:SS (no microseconds)
+            # Remove microseconds by replacing with empty string
+            formatted = dt.strftime('%Y-%m-%dT%H:%M:%S')
+            
+            # Append 'Z' for UTC
+            return formatted + 'Z'
+        except Exception as e:
+            # Fallback: try to fix the string directly
+            # Remove microseconds (keep only seconds or milliseconds)
+            if '.' in iso_str:
+                # Split on '.' to handle microseconds
+                parts = iso_str.split('.')
+                if len(parts) == 2:
+                    # Has microseconds/milliseconds
+                    date_part = parts[0]
+                    micro_part = parts[1]
+                    # Remove timezone from micro part if present
+                    if '+' in micro_part or '-' in micro_part[-6:]:
+                        # Extract timezone
+                        if '+' in micro_part:
+                            tz_part = '+' + micro_part.split('+')[1]
+                            micro_part = micro_part.split('+')[0]
+                        else:
+                            # Find timezone at the end
+                            tz_part = micro_part[-6:]
+                            micro_part = micro_part[:-6]
+                    else:
+                        tz_part = ''
+                    
+                    # Keep only first 3 digits (milliseconds) or remove if more
+                    if len(micro_part) > 3:
+                        micro_part = micro_part[:3]
+                    elif len(micro_part) == 0:
+                        # No microseconds, just use date part
+                        iso_str = date_part + (tz_part if tz_part else '')
+                    else:
+                        # Has milliseconds, keep them
+                        iso_str = date_part + '.' + micro_part + (tz_part if tz_part else '')
+            
+            # Replace +00:00 or -00:00 with Z
+            iso_str = iso_str.replace('+00:00', 'Z').replace('-00:00', 'Z')
+            
+            # If it doesn't end with Z, add it
+            if not iso_str.endswith('Z') and not re.match(r'[+-]\d{2}:\d{2}$', iso_str[-6:]):
+                # Remove any existing timezone and add Z
+                iso_str = re.sub(r'[+-]\d{2}:\d{2}$', '', iso_str)
+                iso_str = iso_str.rstrip('Z') + 'Z'
+            
+            return iso_str
+    
+    normalized_start = normalize_iso(start_iso)
+    normalized_end = normalize_iso(end_iso)
+    
     payload = {
-        "user_id": user_id,
-        "action": "freebusy", 
+        "user_id": MCP_USER_ID,
+        "action": "list-events",
         "params": {
-            "timeMin": start_iso,
-            "timeMax": end_iso,
-            "items": [{"id": calendar_email}]
+            "calendarId": calendar_email,
+            "timeMin": normalized_start,
+            "timeMax": normalized_end
         }
     }
-    return await mcp_post(payload)
+    
+    result = await mcp_post(payload)
+    
+    # Extract events from response
+    events = []
+    if isinstance(result, dict):
+        # Check for events field first (HTTP server sets this)
+        if "events" in result and isinstance(result["events"], list):
+            events = result["events"]
+        # Check for raw events data
+        elif "raw" in result and isinstance(result["raw"], list):
+            events = result["raw"]
+        elif "raw" in result and isinstance(result["raw"], dict) and "items" in result["raw"]:
+            events = result["raw"]["items"]
+        elif "content" in result:
+            # Try to parse from content text
+            content = result["content"]
+            if isinstance(content, list):
+                for item in content:
+                    if isinstance(item, dict) and "text" in item:
+                        # Content might be text description, not event data
+                        pass
+    
+    # Debug: Log what we got from MCP
+    print(f"[DEBUG get_events_for_window] MCP returned {len(events)} events")
+    if len(events) == 0:
+        print(f"[DEBUG] MCP result structure: {list(result.keys()) if isinstance(result, dict) else type(result)}")
+        if isinstance(result, dict):
+            if "raw" in result:
+                print(f"[DEBUG] Raw data type: {type(result['raw'])}")
+                print(f"[DEBUG] Raw data value: {result['raw']}")
+            if "content" in result:
+                print(f"[DEBUG] Content: {result['content']}")
+            if "events" in result:
+                print(f"[DEBUG] Events field: {type(result['events'])}, value: {result['events']}")
+            # Print full result for debugging
+            print(f"[DEBUG] Full result keys: {list(result.keys())}")
+            print(f"[DEBUG] Full result (first 500 chars): {str(result)[:500]}")
+    
+    return events
 
-# ---------------------------
-# Busy-check logic (deterministic)
-# ---------------------------
-def overlaps(start_a: datetime.datetime, end_a: datetime.datetime,
-             start_b: datetime.datetime, end_b: datetime.datetime) -> bool:
-    """Return True if intervals [start_a,end_a) and [start_b,end_b) overlap."""
-    return start_a < end_b and start_b < end_a
+def overlaps(start1: datetime.datetime, end1: datetime.datetime, start2: datetime.datetime, end2: datetime.datetime) -> bool:
+    """
+    Check if two time ranges overlap.
+    Returns True if [start1, end1) overlaps with [start2, end2).
+    """
+    return start1 < end2 and start2 < end1
 
-def is_time_busy_at(request_start: str, request_end: str, busy_slots: List[Dict]) -> (bool, List[Dict]):
+async def is_slot_free(
+    start: datetime.datetime,
+    end: datetime.datetime,
+    existing_events: List[Dict],
+    mcp_post_func,  # Kept for compatibility but not used
+    buffer_minutes: int = 0,
+    calendar_email: str = None,  # Kept for compatibility but not used
+    is_inperson_meeting: bool = False  # True if the proposed meeting is in-person
+) -> bool:
     """
-    Given requested ISO window and busy_slots from MCP, determine if busy.
-    Returns (is_busy, overlapping_slots).
+    Check if a time slot is free, considering buffer time.
+    Uses the existing_events list to determine availability (no additional MCP calls).
+    
+    For in-person meetings: requires 30 minutes buffer AFTER any existing in-person event.
     """
-    req_start = dateparser.isoparse(request_start)
-    req_end = dateparser.isoparse(request_end)
-    overlaps_list = []
-    for slot in busy_slots:
-        # Normalize possible field names
-        slot_start = dateparser.isoparse(slot.get("start") or slot.get("startDateTime") or slot.get("start_time"))
-        slot_end = dateparser.isoparse(slot.get("end") or slot.get("endDateTime") or slot.get("end_time"))
-        if overlaps(req_start, req_end, slot_start, slot_end):
-            overlaps_list.append({"start": slot_start.isoformat() + "Z", "end": slot_end.isoformat() + "Z"})
-    return (len(overlaps_list) > 0, overlaps_list)
+    from preferences import is_slot_free as pref_is_slot_free
+    return await pref_is_slot_free(start, end, existing_events, mcp_post_func, buffer_minutes, calendar_email, is_inperson_meeting)
 
 # ---------------------------
 # Agent 1: Parse user query and extract time window
@@ -230,15 +326,11 @@ Example response:
         response_text = str(response.output)
     
     # Try to extract JSON from the response (handle code blocks and markdown)
-    # Remove markdown code blocks if present
     response_text = re.sub(r'```json\s*', '', response_text)
     response_text = re.sub(r'```\s*', '', response_text)
-    # Try to find JSON object - look for content between first { and last } that contains both fields
     if '"start_iso"' in response_text and '"end_iso"' in response_text:
-        # Find the first { and try to match to the corresponding }
         start_idx = response_text.find('{')
         if start_idx != -1:
-            # Count braces to find matching closing brace
             brace_count = 0
             for i in range(start_idx, len(response_text)):
                 if response_text[i] == '{':
@@ -251,7 +343,6 @@ Example response:
     
     try:
         time_window = json.loads(response_text)
-        # Validate required fields
         if "start_iso" not in time_window or "end_iso" not in time_window:
             raise ValueError("Missing start_iso or end_iso in response")
         return time_window
@@ -261,7 +352,16 @@ Example response:
 # ---------------------------
 # Agent 2: Format response conversationally
 # ---------------------------
-async def format_reply_with_llm(is_busy: bool, overlaps: List[Dict], user_question: str, conversation_history: List[Dict[str, str]] = None) -> str:
+async def format_reply_with_llm(
+    is_busy: bool, 
+    overlaps: List[Dict], 
+    user_question: str, 
+    conversation_history: List[Dict[str, str]] = None,
+    suggested_times: List[Dict] = None,
+    suggested_location: Optional[str] = None,
+    meeting_type: Optional[str] = None,
+    duration_minutes: Optional[int] = None
+) -> str:
     """
     Agent 2: Formats the availability check results into a conversational response.
     Takes the overlap results and creates a natural, friendly reply for the user.
@@ -271,8 +371,11 @@ async def format_reply_with_llm(is_busy: bool, overlaps: List[Dict], user_questi
         overlaps: List of overlapping time slots
         user_question: Current user question
         conversation_history: List of previous conversation turns for context
+        suggested_times: List of suggested time slots
+        suggested_location: Suggested location for in-person meetings
+        meeting_type: "online" or "in-person"
+        duration_minutes: Duration of the meeting
     """
-    # Build orchestrator & agent (lightweight each run; you could make these global singletons)
     classifier = OpenAIClassifier(options=OpenAIClassifierOptions(api_key=OPENAI_KEY))
     orchestrator = AgentSquad(classifier=classifier)
     formatter_agent = OpenAIAgent(
@@ -286,7 +389,6 @@ async def format_reply_with_llm(is_busy: bool, overlaps: List[Dict], user_questi
     )
     orchestrator.add_agent(formatter_agent)
 
-    # Build conversation history context for more natural responses
     history_context = ""
     if conversation_history and len(conversation_history) > 0:
         history_context = "\n\nPrevious conversation (for context):\n"
@@ -299,51 +401,99 @@ async def format_reply_with_llm(is_busy: bool, overlaps: List[Dict], user_questi
                 history_context += f"Assistant: {assistant_msg}\n"
         history_context += "\n"
     
-    # Prompt: Agent 2 formats the result conversationally
-    prompt = (
-        "You are a friendly calendar assistant. Based on the availability check results, "
-        "provide a natural, conversational response to the user's question.\n"
-        f"{history_context}"
-        f"User's current question: \"{user_question}\"\n\n"
-        f"Availability check results:\n"
-        f"- Is busy: {is_busy}\n"
-        f"- Overlapping events: {len(overlaps)} conflict(s)\n"
-        f"{'- Overlapping time slots: ' + json.dumps(overlaps, indent=2) if overlaps else ''}\n\n"
-        "Provide a friendly, conversational response that:\n"
-        "1. Directly answers whether they are free or busy\n"
-        "2. Mentions any conflicting events if applicable\n"
-        "3. Is helpful and natural (not robotic)\n"
-        "4. Can reference previous conversation if relevant (e.g., 'Yes, you're free at 10am tomorrow too')\n\n"
-        "Example responses:\n"
-        "- If free: \"You're free at that time! Go ahead and schedule it.\"\n"
-        "- If busy: \"You're busy at that time. You have a conflicting event from 3:00 PM to 4:00 PM.\"\n\n"
-        "Your response:"
-    )
+    # Build suggested times text - only show the FIRST (best) suggestion
+    suggested_times_text = ""
+    first_suggestion = None
+    if suggested_times and len(suggested_times) > 0:
+        # Only show the first/best suggestion in the response
+        first_suggestion = suggested_times[0]
+        start_iso = first_suggestion.get("start_iso", "")
+        end_iso = first_suggestion.get("end_iso", "")
+        reason = first_suggestion.get("reason", "")
+        try:
+            start_dt = dateparser.isoparse(start_iso)
+            end_dt = dateparser.isoparse(end_iso)
+            start_str = start_dt.strftime("%A, %B %d at %I:%M %p")
+            end_str = end_dt.strftime("%I:%M %p")
+            suggested_times_text = f"{start_str} - {end_str}"
+            if reason:
+                suggested_times_text += f" ({reason})"
+        except:
+            suggested_times_text = f"{start_iso} - {end_iso}"
+    
+    overlap_text = ""
+    if overlaps:
+        overlap_text = f"\nConflicting events: {len(overlaps)} conflict(s)\n"
+        for overlap in overlaps[:3]:  # Show first 3 conflicts
+            overlap_text += f"- {json.dumps(overlap)}\n"
+    
+    availability_status = "Busy" if is_busy else "Free"
+    
+    system_prompt = """You are a calendar assistant. Provide direct, concise responses without fluff. No phrases like "I'd be happy to help" or "I'd be happy to meet". Be straightforward and professional."""
+    
+    # Build the prompt with emphasis on suggestions
+    if suggested_times and len(suggested_times) > 0:
+        # When we have suggestions, present only the FIRST (best) suggestion and ask if it works
+        location_text = f" at {suggested_location}" if suggested_location else ""
+        user_prompt = f"""{system_prompt}
 
-    response = await orchestrator.route_request(prompt, user_id=MCP_USER_ID, session_id="busy-check")
-    # extract assistant textual output (same extraction as earlier)
-    assistant_text = ""
-    if hasattr(response.output, "content"):
-        content = response.output.content
-        if isinstance(content, list):
-            for part in content:
-                if isinstance(part, dict) and "text" in part:
-                    assistant_text += part["text"]
-                elif isinstance(part, str):
-                    assistant_text += part
-                else:
-                    assistant_text += str(part)
-        else:
-            assistant_text = str(content)
+User asked: {user_question}
+
+Availability: {availability_status}
+{overlap_text}
+
+Best available time based on preferences: {suggested_times_text}{location_text}
+
+Provide a direct response that presents this ONE time suggestion and asks if it works. Be concise - no fluff. Example: "How about {suggested_times_text}{location_text}? Does that work for you?"
+
+IMPORTANT: 
+- Only mention this ONE time. Do not list multiple times.
+- Be direct and concise. No pleasantries or fluff.
+- Ask if this specific time works for them."""
     else:
-        assistant_text = str(response.output)
+        # No suggestions available
+        user_prompt = f"""{system_prompt}
 
-    return assistant_text
+User asked: {user_question}
+
+Availability: {availability_status}
+{overlap_text}
+
+Format a natural response."""
+
+    response = await orchestrator.route_request(user_prompt, user_id=MCP_USER_ID, session_id="response_formatter_session")
+    
+    # Extract response content
+    response_text = ""
+    if hasattr(response.output, 'content'):
+        content = response.output.content
+        if isinstance(content, list) and len(content) > 0:
+            text_parts = []
+            for item in content:
+                if isinstance(item, dict) and 'text' in item:
+                    text_parts.append(item['text'])
+                elif isinstance(item, str):
+                    text_parts.append(item)
+                else:
+                    text_parts.append(str(item))
+            response_text = ' '.join(text_parts) if text_parts else str(content)
+        else:
+            response_text = str(content) if content else ""
+    else:
+        response_text = str(response.output)
+    
+    return response_text.strip()
 
 # ---------------------------
 # Main orchestration function
 # ---------------------------
-async def check_busy(user_query: str, conversation_history: List[Dict[str, str]] = None) -> str:
+async def check_busy(
+    user_query: str, 
+    conversation_history: List[Dict[str, str]] = None,
+    meeting_type: Optional[str] = None,
+    meeting_description: Optional[str] = None,
+    duration_minutes: Optional[int] = None
+) -> Dict:
     """
     Top-level function that orchestrates the two-agent workflow.
     
@@ -353,53 +503,259 @@ async def check_busy(user_query: str, conversation_history: List[Dict[str, str]]
     Args:
         user_query: Natural language query (e.g., "Am I free tomorrow at 3pm for 30 minutes?")
         conversation_history: List of previous conversation turns [{"user": "...", "assistant": "..."}, ...]
+        meeting_type: "online" or "in-person"
+        meeting_description: Description/purpose of the meeting
+        duration_minutes: Duration of the meeting in minutes
     
     Returns:
-        str: Conversational response from Agent 2
+        Dict with 'response' (str), 'suggested_time', 'suggested_times', 'suggested_location'
     """
     # Step 1: Agent 1 - Parse user query and extract time window (with conversation history)
     time_window = await parse_time_window_from_query(user_query, conversation_history)
     start_iso = time_window["start_iso"]
     end_iso = time_window["end_iso"]
     
-    # Step 2: Query MCP for busy slots
-    # Expand the query window to catch overlapping events
-    # Query 24 hours before and after to ensure we catch all relevant events
-    query_start = dateparser.isoparse(start_iso) - datetime.timedelta(hours=24)
-    query_end = dateparser.isoparse(end_iso) + datetime.timedelta(hours=24)
-    query_start_iso = query_start.isoformat().replace('+00:00', 'Z')
-    query_end_iso = query_end.isoformat().replace('+00:00', 'Z')
+    # Step 2: Get events for the next 2 weeks using list-events (instead of freebusy)
+    now = datetime.datetime.now(datetime.timezone.utc)
+    query_start = now
+    query_end = now + datetime.timedelta(days=14)
     
-    fb = await get_freebusy_for_window(query_start_iso, query_end_iso, user_id=MCP_USER_ID)
-    # Parse the MCP response - it returns content with text, need to extract busy slots
-    busy_slots = []
-    if isinstance(fb, dict):
-        # First, try to get busy slots directly (HTTP server sets this)
-        if "busy" in fb and isinstance(fb["busy"], list):
-            busy_slots = fb["busy"]
-        # Fallback: try to parse from raw response
-        elif "raw" in fb:
-            try:
-                raw_data = json.loads(fb["raw"]) if isinstance(fb["raw"], str) else fb["raw"]
-                if isinstance(raw_data, dict) and "calendars" in raw_data:
-                    # Extract busy slots from all calendars
-                    for calendar_id, calendar_info in raw_data["calendars"].items():
-                        if isinstance(calendar_info, dict) and "busy" in calendar_info:
-                            busy_slots.extend(calendar_info["busy"])
-            except:
-                pass
-        # Last fallback: try other possible field names
-        if not busy_slots:
-            busy_slots = fb.get("items") or fb.get("events") or []
+    # Format as ISO with Z suffix (UTC) - matches MCP regex: ^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?(Z|[+-]\d{2}:\d{2})$
+    def format_iso_utc(dt: datetime.datetime) -> str:
+        """Format datetime as ISO 8601 with Z suffix for UTC (no microseconds)."""
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=datetime.timezone.utc)
+        else:
+            dt = dt.astimezone(datetime.timezone.utc)
+        # Use strftime to avoid microseconds - format: YYYY-MM-DDTHH:MM:SS
+        formatted = dt.strftime('%Y-%m-%dT%H:%M:%S')
+        # Append 'Z' for UTC
+        return formatted + 'Z'
     
-    # Step 3: Run deterministic overlap test
-    is_busy, overlaps_list = is_time_busy_at(start_iso, end_iso, busy_slots)
+    query_start_iso = format_iso_utc(query_start)
+    query_end_iso = format_iso_utc(query_end)
     
-    # Step 4: Agent 2 - Format response conversationally (with conversation history)
-    assistant_reply = await format_reply_with_llm(is_busy, overlaps_list, user_query, conversation_history)
+    calendar_email = MCP_CALENDAR_EMAIL or await get_primary_calendar_email()
+    events = await get_events_for_window(query_start_iso, query_end_iso, calendar_email)
     
-    # Return only the LLM's conversational answer
-    return assistant_reply
+    # Debug: Log events retrieved
+    print(f"\n[DEBUG] Retrieved {len(events)} events from calendar")
+    for i, event in enumerate(events[:5]):  # Show first 5 events
+        event_start = event.get("start", {}).get("dateTime") or event.get("start", {}).get("date", "")
+        event_end = event.get("end", {}).get("dateTime") or event.get("end", {}).get("date", "")
+        summary = event.get("summary", "No title")
+        location = event.get("location", "")
+        is_online = is_online_meeting(event)
+        print(f"  Event {i+1}: {summary} | {event_start} - {event_end} | Location: {location} | Online: {is_online}")
+    
+    # Step 3: Check if requested time is busy (accounting for buffers for in-person meetings)
+    requested_start = dateparser.isoparse(start_iso)
+    requested_end = dateparser.isoparse(end_iso)
+    
+    is_busy = False
+    overlaps_list = []
+    
+    for event in events:
+        event_start_str = event.get("start", {}).get("dateTime") or event.get("start", {}).get("date", "")
+        event_end_str = event.get("end", {}).get("dateTime") or event.get("end", {}).get("date", "")
+        
+        if not event_start_str or not event_end_str:
+            continue
+        
+        try:
+            # Parse ISO format
+            if event_start_str.endswith('Z'):
+                event_start_str = event_start_str[:-1] + '+00:00'
+            if event_end_str.endswith('Z'):
+                event_end_str = event_end_str[:-1] + '+00:00'
+            
+            event_start = dateparser.isoparse(event_start_str)
+            event_end = dateparser.isoparse(event_end_str)
+            
+            # For in-person meetings: apply 30 min buffer before and after existing in-person events
+            existing_is_inperson = not is_online_meeting(event)
+            
+            if meeting_type == "in-person" and existing_is_inperson:
+                # Add 30 minutes buffer before and after the existing event
+                effective_event_start = event_start - datetime.timedelta(minutes=30)
+                effective_event_end = event_end + datetime.timedelta(minutes=30)
+            else:
+                effective_event_start = event_start
+                effective_event_end = event_end
+            
+            # Check for overlap with effective times (including buffers)
+            if overlaps(requested_start, requested_end, effective_event_start, effective_event_end):
+                is_busy = True
+                overlaps_list.append({
+                    "start": event_start.isoformat().replace('+00:00', 'Z'),
+                    "end": event_end.isoformat().replace('+00:00', 'Z'),
+                    "summary": event.get("summary", "Busy")
+                })
+        except:
+            continue
+    
+    # Step 4: Always suggest times proactively when meeting details are provided
+    suggested_times = []
+    suggested_location = None
+    
+    # Always suggest times if meeting type and duration are provided (proactive suggestions)
+    if meeting_type and duration_minutes:
+        # Use preferences to suggest times based on meeting type
+        if meeting_type == "online":
+            suggested_times = await suggest_online_times(
+                duration_minutes=duration_minutes,
+                events=events,
+                start_date=now,
+                end_date=query_end,
+                mcp_post_func=mcp_post,
+                calendar_email=calendar_email
+            )
+        elif meeting_type == "in-person":
+            # For in-person, we need description to determine if it's friendly or business
+            if meeting_description:
+                suggested_times, suggested_location = await suggest_inperson_times(
+                    duration_minutes=duration_minutes,
+                    description=meeting_description,
+                    events=events,
+                    start_date=now,
+                    end_date=query_end,
+                    mcp_post_func=mcp_post,
+                    calendar_email=calendar_email
+                )
+            else:
+                # If no description, use default business meeting logic
+                suggested_times, suggested_location = await suggest_inperson_times(
+                    duration_minutes=duration_minutes,
+                    description="business meeting",  # Default to business
+                    events=events,
+                    start_date=now,
+                    end_date=query_end,
+                    mcp_post_func=mcp_post,
+                    calendar_email=calendar_email
+                )
+    
+    # Step 5: Agent 2 - Format response conversationally
+    assistant_reply = await format_reply_with_llm(
+        is_busy, 
+        overlaps_list, 
+        user_query, 
+        conversation_history,
+        suggested_times=suggested_times,
+        suggested_location=suggested_location,
+        meeting_type=meeting_type,
+        duration_minutes=duration_minutes
+    )
+    
+    # Return dict with response and suggestions
+    result = {
+        "response": assistant_reply,
+        "suggested_times": suggested_times
+    }
+    
+    if suggested_times and len(suggested_times) > 0:
+        result["suggested_time"] = suggested_times[0]
+    
+    if suggested_location:
+        result["suggested_location"] = suggested_location
+    
+    return result
+
+# ---------------------------
+# Create calendar event
+# ---------------------------
+async def create_calendar_event(
+    start_iso: str,
+    end_iso: str,
+    meeting_type: str = "in-person",
+    location: Optional[str] = None,
+    attendee_email: Optional[str] = None
+) -> Dict:
+    """
+    Create a calendar event via MCP.
+    
+    Args:
+        start_iso: Start time in ISO format with timezone
+        end_iso: End time in ISO format with timezone
+        meeting_type: "online" or "in-person"
+        location: Location for in-person meetings
+        attendee_email: Email address for online meetings
+    
+    Returns:
+        Dict with event_id, html_link, meet_link, and message
+    """
+    # Get calendar email
+    calendar_email = MCP_CALENDAR_EMAIL or await get_primary_calendar_email()
+    
+    # Determine timezone from start_iso (default to UTC)
+    timezone = "UTC"
+    if "+" in start_iso or start_iso.endswith("Z"):
+        if start_iso.endswith("Z"):
+            timezone = "UTC"
+        else:
+            timezone = "UTC"
+    
+    # Build event parameters
+    event_params = {
+        "calendarId": calendar_email,
+        "summary": "Meeting with Greta",
+        "start": start_iso,
+        "end": end_iso,
+        "timeZone": timezone,
+    }
+    
+    # Add location for in-person meetings
+    if meeting_type == "in-person" and location:
+        event_params["location"] = location
+    
+    # Add attendees for online meetings (triggers Google Meet)
+    if meeting_type == "online" and attendee_email:
+        event_params["attendees"] = [{"email": attendee_email}]
+        event_params["sendUpdates"] = "all"  # Send invites to all attendees
+        # Google Meet will be auto-added by the MCP handler
+    
+    # Create event via MCP
+    payload = {
+        "user_id": MCP_USER_ID or "user123",
+        "action": "create-event",
+        "params": event_params
+    }
+    
+    result = await mcp_post(payload)
+    
+    # Extract event details from response
+    event_id = None
+    html_link = None
+    meet_link = None
+    
+    if isinstance(result, dict):
+        # Check for raw event data (preferred)
+        event_data = result.get("raw") or result.get("event")
+        
+        if event_data and isinstance(event_data, dict):
+            event_id = event_data.get("id")
+            html_link = event_data.get("htmlLink")
+            # Extract Google Meet link from conferenceData
+            if "conferenceData" in event_data:
+                entry_points = event_data["conferenceData"].get("entryPoints", [])
+                for entry in entry_points:
+                    if entry.get("entryPointType") == "video":
+                        meet_link = entry.get("uri")
+                        break
+        
+        # Fallback: try to extract event ID from content text
+        if not event_id and "content" in result and isinstance(result["content"], list):
+            for item in result["content"]:
+                if isinstance(item, dict) and "text" in item:
+                    text = item["text"]
+                    if "(" in text and ")" in text:
+                        event_id = text.split("(")[1].split(")")[0]
+    
+    return {
+        "event_id": event_id,
+        "html_link": html_link,
+        "meet_link": meet_link,
+        "message": "Event created successfully" if event_id else "Event may have been created, but details unavailable"
+    }
 
 # ---------------------------
 # Interactive terminal interface
@@ -445,12 +801,18 @@ async def interactive_mode():
             # Process the query with conversation history
             print("\nProcessing...")
             result = await check_busy(user_query, conversation_history)
-            print(f"\n{result}\n")
+            
+            # Handle both dict and string responses
+            if isinstance(result, dict):
+                response = result.get("response", "")
+                print(f"\n{response}\n")
+            else:
+                print(f"\n{result}\n")
             
             # Add this turn to conversation history
             conversation_history.append({
                 "user": user_query,
-                "assistant": result
+                "assistant": result.get("response", "") if isinstance(result, dict) else result
             })
             
             # Keep only last 10 turns to avoid context bloat
