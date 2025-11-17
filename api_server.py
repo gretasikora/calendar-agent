@@ -22,7 +22,15 @@ CORS(app)  # Enable CORS for frontend
 # Simple token storage (in production, use Redis or database)
 # For this simple implementation, we'll use a single token
 AUTH_TOKEN = os.getenv('AUTH_TOKEN') or secrets.token_urlsafe(32)
-ACCESS_PASSWORD = os.getenv('ACCESS_PASSWORD') or 'changeme'
+
+# Get access password from environment variable
+# Priority: .env file > environment variable > default 'changeme'
+ACCESS_PASSWORD = os.getenv('ACCESS_PASSWORD')
+if not ACCESS_PASSWORD:
+    ACCESS_PASSWORD = 'changeme'
+    print("WARNING: ACCESS_PASSWORD not set in .env file, using default 'changeme'")
+else:
+    print(f"ACCESS_PASSWORD loaded from .env file (length: {len(ACCESS_PASSWORD)})")
 
 # Store active sessions (in production, use Redis or database)
 active_tokens = set()
@@ -218,7 +226,8 @@ if __name__ == '__main__':
     port = int(os.getenv('API_PORT', 5000))
     print(f"Starting API server on http://localhost:{port}")
     print(f"Frontend should be served from the 'frontend' directory")
-    print(f"Access password: {ACCESS_PASSWORD}")
-    print(f"Set ACCESS_PASSWORD environment variable to change the password")
+    print(f"Access password loaded from .env file")
+    print(f"Password length: {len(ACCESS_PASSWORD)} characters")
+    print(f"To change the password, update ACCESS_PASSWORD in your .env file")
     app.run(host='0.0.0.0', port=port, debug=True)
 

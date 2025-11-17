@@ -244,20 +244,77 @@ body {
     flex-wrap: wrap;
 }
 
-/* Loading indicator */
-.loading {
+/* Loading indicator - animated dots */
+.loading-dots {
     display: inline-block;
+    margin-left: 2px;
+    color: #ffffff;
 }
 
-.loading::after {
-    content: '...';
-    animation: dots 1.5s steps(4, end) infinite;
+.loading-dots span {
+    display: inline-block;
+    color: #ffffff;
+    opacity: 0;
 }
 
-@keyframes dots {
-    0%, 20% { content: '.'; }
-    40% { content: '..'; }
-    60%, 100% { content: '...'; }
+.loading-dots span:nth-child(1) {
+    animation: dot-1 2.4s infinite;
+    animation-delay: 0s;
+}
+
+.loading-dots span:nth-child(2) {
+    animation: dot-2 2.4s infinite;
+    animation-delay: 0.6s;
+}
+
+.loading-dots span:nth-child(3) {
+    animation: dot-3 2.4s infinite;
+    animation-delay: 1.2s;
+}
+
+@keyframes dot-1 {
+    0% {
+        opacity: 1;
+    }
+    74.99% {
+        opacity: 1;
+    }
+    75% {
+        opacity: 0;
+    }
+    100% {
+        opacity: 0;
+    }
+}
+
+@keyframes dot-2 {
+    0% {
+        opacity: 1;
+    }
+    49.99% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0;
+    }
+    100% {
+        opacity: 0;
+    }
+}
+
+@keyframes dot-3 {
+    0% {
+        opacity: 1;
+    }
+    24.99% {
+        opacity: 1;
+    }
+    25% {
+        opacity: 0;
+    }
+    100% {
+        opacity: 0;
+    }
 }
 
 /* Login Screen Styles */

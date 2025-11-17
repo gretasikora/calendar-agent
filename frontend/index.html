@@ -3,16 +3,17 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self' http://localhost:5000 http://127.0.0.1:5000;">
     <title>Calendar Booking Agent</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <!-- Login Screen -->
-    <div id="login-screen" class="login-screen">
+    <!-- Login Screen (shown by default) -->
+    <div id="login-screen" class="login-screen" style="display: flex;">
         <div class="login-container">
             <h1>Calendar Booking Agent</h1>
             <p>Enter the password to access the booking system</p>
-            <form id="login-form" onsubmit="handleLogin(event)">
+            <form id="login-form">
                 <input type="password" id="password-input" class="text-input" placeholder="Password" required autofocus />
                 <button type="submit" class="btn">Access</button>
                 <div id="login-error" class="error-message" style="display: none;"></div>

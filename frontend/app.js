@@ -19,13 +19,19 @@ let conversationState = {
 
 // Initialize the app
 document.addEventListener('DOMContentLoaded', () => {
-    // Check if already authenticated (token in sessionStorage)
-    authToken = sessionStorage.getItem('authToken');
-    if (authToken) {
-        isAuthenticated = true;
-        showApp();
-    } else {
-        showLogin();
+    // Always show login screen on page load
+    // User must enter password even if token exists in sessionStorage
+    showLogin();
+    
+    // Clear any existing token to force fresh login
+    authToken = null;
+    sessionStorage.removeItem('authToken');
+    isAuthenticated = false;
+    
+    // Attach login form handler (avoid inline event handlers for CSP compliance)
+    const loginForm = document.getElementById('login-form');
+    if (loginForm) {
+        loginForm.addEventListener('submit', handleLogin);
     }
 });
 
@@ -62,9 +68,44 @@ function getApiHeaders() {
     return headers;
 }
 
+// Handle 401 Unauthorized errors - clear token and show login
+async function handle401Error() {
+    // Clear invalid token
+    authToken = null;
+    sessionStorage.removeItem('authToken');
+    isAuthenticated = false;
+    
+    // Reset conversation state
+    conversationState = {
+        step: 'greeting',
+        duration: null,
+        customDuration: null,
+        purpose: '',
+        isOnline: null,
+        conversationHistory: [],
+        meetingScheduled: false,
+        suggestedTimes: [],
+        currentSuggestionIndex: 0,
+        rejectedTimes: [],
+        fetchRetryCount: 0
+    };
+    
+    // Clear chat messages
+    const chatMessages = document.getElementById('chat-messages');
+    if (chatMessages) {
+        chatMessages.innerHTML = '';
+        chatMessages.classList.remove('no-scroll');
+    }
+    
+    // Show login screen again
+    showLogin();
+}
+
 // Handle login
 async function handleLogin(event) {
-    event.preventDefault();
+    if (event) {
+        event.preventDefault();
+    }
     const passwordInput = document.getElementById('password-input');
     const password = passwordInput.value;
     const errorDiv = document.getElementById('login-error');
@@ -109,7 +150,7 @@ async function handleLogin(event) {
 
 // Show greeting message
 async function showGreeting() {
-    const greeting = "Hello! I'm here to help you book time with me.\nTo get started, I'll need a few details:\n";
+    const greeting = "Hello! I'm here to help you book time with Greta.\nTo get started, I'll need a few details:\n";
     await typewriterMessage('agent', greeting);
     showDurationSelection();
 }
@@ -260,7 +301,7 @@ async function processBooking() {
     inputSection.innerHTML = '';
     
     // Show processing message
-    await typewriterMessage('agent', 'Perfect! Let me check my availability...');
+    await typewriterMessage('agent', 'Perfect! Let me check her availability...');
     
     // Build the query for the agent
     const durationText = conversationState.customDuration 
@@ -293,6 +334,12 @@ async function processBooking() {
         });
         
         if (!response.ok) {
+            // Handle 401 Unauthorized - token expired or invalid
+            if (response.status === 401) {
+                await handle401Error();
+                return;
+            }
+            
             // Try to get error details from response
             let errorMessage = 'Failed to check availability';
             try {
@@ -329,21 +376,28 @@ async function processBooking() {
             // Update conversation history
             conversationState.conversationHistory[conversationState.conversationHistory.length - 1].assistant = agentResponse;
             
-            // Show response
-            await typewriterMessage('agent', agentResponse);
+            // Replace the loading message with the actual response
+            await updateLoadingMessage(agentResponse);
             showSuggestionButtons(suggestedTime, suggestedLocation);
         } else {
             // No suggestions - use LLM response as fallback
-            const agentResponse = data.response || 'I was unable to check my availability. Please try again.';
+            const agentResponse = data.response || 'I was unable to check her availability. Please try again.';
             conversationState.conversationHistory[conversationState.conversationHistory.length - 1].assistant = agentResponse;
-            await typewriterMessage('agent', agentResponse);
+            // Replace the loading message with the actual response
+            await updateLoadingMessage(agentResponse);
             showFollowUp();
         }
         
     } catch (error) {
         console.error('Error:', error);
-        const errorMessage = error.message || 'Sorry, I encountered an error checking my availability. Please try again later.';
-        await typewriterMessage('agent', `Error: ${errorMessage}\n\nPlease check:\n1. Backend API server is running (http://localhost:5000)\n2. MCP server is running (http://localhost:3000)\n3. Check browser console for details.`);
+        const errorMessage = error.message || 'Sorry, I encountered an error checking her availability. Please try again later.';
+        const fullErrorMessage = `Error: ${errorMessage}\n\nPlease check:\n1. Backend API server is running (http://localhost:5000)\n2. MCP server is running (http://localhost:3000)\n3. Check browser console for details.`;
+        // Update the loading message with error, or create new message if no loading message exists
+        if (currentLoadingMessage) {
+            await updateLoadingMessage(fullErrorMessage);
+        } else {
+            await typewriterMessage('agent', fullErrorMessage);
+        }
         showFollowUp();
     }
 }
@@ -439,7 +493,7 @@ async function createEvent(startIso, endIso, attendeeEmail) {
     const inputSection = document.getElementById('input-section');
     inputSection.innerHTML = '';
     
-    // Show processing message
+    // Show processing message with loading dots
     await typewriterMessage('agent', 'Creating the calendar event...', false);
     
     try {
@@ -457,6 +511,12 @@ async function createEvent(startIso, endIso, attendeeEmail) {
         });
         
         if (!response.ok) {
+            // Handle 401 Unauthorized - token expired or invalid
+            if (response.status === 401) {
+                await handle401Error();
+                return;
+            }
+            
             let errorMessage = 'Failed to create event';
             try {
                 const errorData = await response.json();
@@ -479,15 +539,19 @@ async function createEvent(startIso, endIso, attendeeEmail) {
         const chatMessages = document.getElementById('chat-messages');
         chatMessages.classList.add('no-scroll');
         
-        // Show success message
-        let successMessage = 'Great! I\'ve sent you an invite! See you soon!';
-        
-        await typewriterMessage('agent', successMessage, false);
+        // Replace loading message with success message
+        const successMessage = 'Calendar invite sent! See you soon!';
+        await updateLoadingMessage(successMessage);
         
     } catch (error) {
         console.error('Error creating event:', error);
         const errorMessage = error.message || 'Sorry, I encountered an error creating the event. Please try again later.';
-        await typewriterMessage('agent', `Error: ${errorMessage}`, false);
+        // Update loading message with error, or create new message if no loading message exists
+        if (currentLoadingMessage) {
+            await updateLoadingMessage(`Error: ${errorMessage}`);
+        } else {
+            await typewriterMessage('agent', `Error: ${errorMessage}`, false);
+        }
         showFollowUp();
     }
 }
@@ -559,6 +623,12 @@ async function fetchMoreSuggestions() {
         });
         
         if (!response.ok) {
+            // Handle 401 Unauthorized - token expired or invalid
+            if (response.status === 401) {
+                await handle401Error();
+                return;
+            }
+            
             let errorMessage = 'Failed to get more suggestions';
             try {
                 const errorData = await response.json();
@@ -589,13 +659,15 @@ async function fetchMoreSuggestions() {
             // Limit retries to prevent infinite loops (max 3 retries)
             if (conversationState.fetchRetryCount > 3) {
                 // After 3 retries, show custom input as last resort
-                await typewriterMessage('agent', 'I\'m having trouble finding available times. Please suggest a time that works for you.');
+                await updateLoadingMessage('I\'m having trouble finding available times. Please suggest a time that works for you.');
                 showCustomTimeInput();
                 conversationState.fetchRetryCount = 0; // Reset for next time
                 return;
             }
             
-            // Retry the request to get more suggestions
+            // Retry the request to get more suggestions - update the loading message
+            // Clear current loading message reference so we can create a new one
+            currentLoadingMessage = null;
             await typewriterMessage('agent', 'Let me check for more available times...');
             // Retry the same request - the backend should generate more suggestions
             setTimeout(() => {
@@ -625,13 +697,20 @@ async function fetchMoreSuggestions() {
             suggestionMessage += ` at ${suggestedLocation}`;
         }
         
-        await typewriterMessage('agent', suggestionMessage);
+        // Replace the loading message with the actual response
+        await updateLoadingMessage(suggestionMessage);
         showSuggestionButtons(nextSuggestion, suggestedLocation);
         
     } catch (error) {
         console.error('Error fetching more suggestions:', error);
         const errorMessage = error.message || 'Sorry, I encountered an error getting more suggestions.';
-        await typewriterMessage('agent', `Error: ${errorMessage}\n\nLet me try to find more available times...`);
+        const fullErrorMessage = `Error: ${errorMessage}\n\nLet me try to find more available times...`;
+        // Update the loading message with error, or create new message if no loading message exists
+        if (currentLoadingMessage) {
+            await updateLoadingMessage(fullErrorMessage);
+        } else {
+            await typewriterMessage('agent', fullErrorMessage);
+        }
         showCustomTimeInput();
     }
 }
@@ -701,6 +780,12 @@ async function submitCustomTime() {
         });
         
         if (!response.ok) {
+            // Handle 401 Unauthorized - token expired or invalid
+            if (response.status === 401) {
+                await handle401Error();
+                return;
+            }
+            
             let errorMessage = 'Failed to check availability';
             try {
                 const errorData = await response.json();
@@ -794,6 +879,12 @@ async function submitFollowUp() {
         });
         
         if (!response.ok) {
+            // Handle 401 Unauthorized - token expired or invalid
+            if (response.status === 401) {
+                await handle401Error();
+                return;
+            }
+            
             // Try to get error details from response
             let errorMessage = 'Failed to check availability';
             try {
@@ -879,6 +970,9 @@ function addUserMessage(text) {
 }
 
 // Typewriter effect for agent messages
+// Store reference to loading message element for cleanup
+let currentLoadingMessage = null;
+
 async function typewriterMessage(sender, text, shouldScroll = true) {
     const chatMessages = document.getElementById('chat-messages');
     const messageDiv = document.createElement('div');
@@ -890,14 +984,24 @@ async function typewriterMessage(sender, text, shouldScroll = true) {
     
     chatMessages.appendChild(messageDiv);
     
+    // Check if this is a loading message (ends with "...")
+    const isLoadingMessage = text.trim().endsWith('...');
+    let baseText = text;
+    
+    if (isLoadingMessage) {
+        // Remove the "..." from the text and add animated dots
+        baseText = text.trim().slice(0, -3);
+        currentLoadingMessage = messageDiv; // Store reference for cleanup
+    }
+    
     // Typewriter effect
     let i = 0;
     const speed = 15; // milliseconds per character (much faster)
     
     return new Promise((resolve) => {
         function type() {
-            if (i < text.length) {
-                contentDiv.textContent = text.substring(0, i + 1);
+            if (i < baseText.length) {
+                contentDiv.textContent = baseText.substring(0, i + 1);
                 i++;
                 // Dynamically scroll to keep input section visible
                 if (shouldScroll && !conversationState.meetingScheduled) {
@@ -905,6 +1009,34 @@ async function typewriterMessage(sender, text, shouldScroll = true) {
                 }
                 setTimeout(type, speed);
             } else {
+                // If this is a loading message, add animated dots
+                if (isLoadingMessage) {
+                    // Use innerHTML to preserve the text and add dots
+                    // Add a space before dots for better visual separation
+                    const loadingDots = ' <span class="loading-dots"><span>.</span><span>.</span><span>.</span></span>';
+                    contentDiv.innerHTML = baseText + loadingDots;
+                    
+                    // Force a reflow and ensure animation starts
+                    void contentDiv.offsetHeight;
+                    
+                    // Use requestAnimationFrame to ensure animation starts after DOM update
+                    requestAnimationFrame(() => {
+                        const dotsElement = contentDiv.querySelector('.loading-dots');
+                        if (dotsElement) {
+                            // Verify dots are visible and animations are applied
+                            const dotSpans = dotsElement.querySelectorAll('span');
+                            console.log(`Found ${dotSpans.length} dot spans`);
+                            dotSpans.forEach((span, index) => {
+                                const computedStyle = window.getComputedStyle(span);
+                                const animation = computedStyle.animation;
+                                console.log(`Dot ${index + 1}: animation = ${animation}, opacity = ${computedStyle.opacity}`);
+                            });
+                        } else {
+                            console.warn('Loading dots element not found after insertion');
+                        }
+                    });
+                }
+                
                 // Remove typewriter class after typing is complete
                 contentDiv.classList.remove('typewriter');
                 // Final scroll adjustment to fit input section
@@ -916,6 +1048,43 @@ async function typewriterMessage(sender, text, shouldScroll = true) {
         }
         type();
     });
+}
+
+// Function to update a loading message with the actual response
+function updateLoadingMessage(newText) {
+    if (currentLoadingMessage) {
+        const contentDiv = currentLoadingMessage.querySelector('.message-content');
+        if (contentDiv) {
+            // Remove loading dots
+            const loadingDots = contentDiv.querySelector('.loading-dots');
+            if (loadingDots) {
+                loadingDots.remove();
+            }
+            // Clear existing text and update with new text using typewriter effect
+            let i = 0;
+            const speed = 15;
+            
+            return new Promise((resolve) => {
+                function type() {
+                    if (i < newText.length) {
+                        contentDiv.textContent = newText.substring(0, i + 1);
+                        i++;
+                        setTimeout(type, speed);
+                    } else {
+                        resolve();
+                    }
+                }
+                // Start typing immediately
+                type();
+            }).then(() => {
+                currentLoadingMessage = null; // Clear reference after update
+            });
+        } else {
+            currentLoadingMessage = null; // Clear reference if no content div found
+            return Promise.resolve();
+        }
+    }
+    return Promise.resolve();
 }
 
 // Scroll to bottom (legacy - for backwards compatibility)
