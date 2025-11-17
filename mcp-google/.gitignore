@@ -1,0 +1,19 @@
+# Ignore node_modules
+node_modules/
+
+# Ignore build artifacts (we'll commit the built files)
+# build/
+
+# Ignore OAuth credentials (sensitive)
+gcp-oauth.keys.json
+
+# Ignore tokens (sensitive, will be re-authenticated on deployment)
+tokens/
+
+# Ignore environment files
+.env
+.env.local
+
+# Ignore OS files
+.DS_Store
+Thumbs.db

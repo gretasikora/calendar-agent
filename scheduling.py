@@ -648,7 +648,7 @@ async def check_busy(
                     calendar_email=calendar_email,
                     rejected_times=rejected_time_set
                 )
-                else:
+            else:
                 # If no description, use default business meeting logic
                 suggested_times, suggested_location = await suggest_inperson_times(
                     duration_minutes=duration_minutes,
