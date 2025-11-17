@@ -48,14 +48,13 @@ OPENAI_API_KEY=sk-your-openai-key
 MCP_URL=http://mcp-server-production.up.railway.app/mcp/calendar
 MCP_USER_ID=user123
 MCP_CALENDAR_EMAIL=your-email@gmail.com
-FLASK_DEBUG=False
-API_PORT=5000
 ```
 
 **Important:** 
 - Set a strong `ACCESS_PASSWORD` - this is what users will enter to access the app
-- Keep `FLASK_DEBUG=False` in production
+- **Note:** Railway automatically sets the `PORT` environment variable - you don't need to set it manually
 - `MCP_URL` will be updated after you deploy the MCP server (see Step 5)
+- The app will use Railway's `PORT` automatically (no `API_PORT` needed)
 
 ### Step 5: Deploy MCP Server (Separate Service)
 

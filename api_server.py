@@ -223,11 +223,14 @@ def serve_static(path):
         return send_from_directory('frontend', 'index.html')
 
 if __name__ == '__main__':
-    port = int(os.getenv('API_PORT', 5000))
-    print(f"Starting API server on http://localhost:{port}")
+    # Railway uses PORT environment variable, fallback to API_PORT or 5000
+    port = int(os.getenv('PORT') or os.getenv('API_PORT', 5000))
+    print(f"Starting API server on http://0.0.0.0:{port}")
     print(f"Frontend should be served from the 'frontend' directory")
     print(f"Access password loaded from .env file")
     print(f"Password length: {len(ACCESS_PASSWORD)} characters")
     print(f"To change the password, update ACCESS_PASSWORD in your .env file")
-    app.run(host='0.0.0.0', port=port, debug=True)
+    # Disable debug mode in production (Railway sets RAILWAY_ENVIRONMENT)
+    debug_mode = os.getenv('RAILWAY_ENVIRONMENT') != 'production'
+    app.run(host='0.0.0.0', port=port, debug=debug_mode)
 
