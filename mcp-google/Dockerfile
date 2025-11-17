@@ -1,14 +1,16 @@
 FROM oven/bun:1
 WORKDIR /usr/src/app
 
-COPY bun.lockb .
 COPY package.json .
-RUN bun install --frozen-lockfile --production --ignore-scripts --no-cache && bun pm cache clean
+# Install all dependencies (including dev dependencies needed for build)
+RUN bun install --ignore-scripts --no-cache && bun pm cache clean
 
 COPY scripts ./scripts
 COPY src ./src
 COPY tsconfig.json .
-RUN bun run postinstall
+# Build the project (TypeScript compilation)
+RUN bun run build
 
 EXPOSE 3000/tcp
-ENTRYPOINT [ "bun", "run", "start" ]
+# Use http-server script for HTTP wrapper
+ENTRYPOINT [ "bun", "run", "http-server" ]
