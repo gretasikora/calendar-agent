@@ -11,6 +11,8 @@ __pycache__/
 # Distribution / packaging
 .Python
 build/
+# Exception: Allow mcp-google/build for deployment (contains http-server.js)
+!mcp-google/build/
 develop-eggs/
 dist/
 downloads/
