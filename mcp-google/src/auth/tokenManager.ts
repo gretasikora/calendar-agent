@@ -105,6 +105,23 @@ export class TokenManager {
 
   async loadSavedTokens(): Promise<boolean> {
     try {
+      // Priority 1: Check for tokens in environment variable (for Railway/deployment)
+      const envTokens = process.env.GOOGLE_CALENDAR_TOKENS;
+      if (envTokens) {
+        try {
+          const tokens = JSON.parse(envTokens);
+          if (tokens && typeof tokens === "object") {
+            this.oauth2Client.setCredentials(tokens);
+            console.log("Loaded tokens from environment variable");
+            return true;
+          }
+        } catch (parseError) {
+          console.error("Error parsing tokens from environment variable:", parseError);
+          // Fall through to file-based loading
+        }
+      }
+
+      // Priority 2: Load from file
       await this.ensureTokenDirectoryExists();
       
       // Check if current token file exists

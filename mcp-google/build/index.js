@@ -232,6 +232,19 @@ var TokenManager = class {
   }
   async loadSavedTokens() {
     try {
+      const envTokens = process.env.GOOGLE_CALENDAR_TOKENS;
+      if (envTokens) {
+        try {
+          const tokens2 = JSON.parse(envTokens);
+          if (tokens2 && typeof tokens2 === "object") {
+            this.oauth2Client.setCredentials(tokens2);
+            console.log("Loaded tokens from environment variable");
+            return true;
+          }
+        } catch (parseError) {
+          console.error("Error parsing tokens from environment variable:", parseError);
+        }
+      }
       await this.ensureTokenDirectoryExists();
       const tokenExists = await fs2.access(this.tokenPath).then(() => true).catch(() => false);
       if (!tokenExists) {
