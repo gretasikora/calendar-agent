@@ -1,6 +1,10 @@
 # Environment variables
 python-dotenv
 
+# Flask web framework
+flask
+flask-cors
+
 # AWS Agent Squad framework
 agent-squad[aws]
 
