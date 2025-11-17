@@ -8,6 +8,9 @@ flask-cors
 # AWS Agent Squad framework
 agent-squad[aws]
 
+# OpenAI SDK (required by agent-squad)
+openai
+
 # AWS SDK
 boto3
 
