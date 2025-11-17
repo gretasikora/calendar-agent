@@ -64,18 +64,59 @@ The MCP server needs to run as a separate service. Since you've modified the MCP
 1. In your Railway project, click **"New Service"**
 2. Select **"GitHub Repo"** and choose your calendar-agent repository
 3. **Important:** Set the **Root Directory** to `mcp-google`
-4. Set the build command: `npm install && npm run build`
-5. Set the start command: `npm run http-server`
-6. Add environment variables:
+4. **Build Command:** Leave empty (Dockerfile handles the build)
+5. **Start Command:** Leave empty (Dockerfile ENTRYPOINT will run `node build/http-server.js`)
+6. Add environment variables (REQUIRED):
    - `PORT=3000`
-   - `GOOGLE_OAUTH_CREDENTIALS` - OAuth credentials (or use env vars)
-   - Any other MCP-specific variables
-7. **For OAuth tokens:** You'll need to either:
-   - Re-authenticate after deployment (run `npm run auth` in the service)
-   - Use persistent volumes for the `tokens/` directory
-   - Or set up OAuth via environment variables if supported
-8. Note the internal service URL (e.g., `mcp-server-production.up.railway.app`)
-9. **Update `MCP_URL`** in your Flask service to: `http://mcp-server-production.up.railway.app/mcp/calendar`
+   - `GOOGLE_CLIENT_ID` - Your Google OAuth Client ID (from Google Cloud Console)
+   - `GOOGLE_CLIENT_SECRET` - Your Google OAuth Client Secret (from Google Cloud Console)
+   - `GOOGLE_CALENDAR_TOKENS` - OAuth tokens JSON (see step 7 for how to get this)
+   
+   **To get OAuth credentials:**
+   1. Go to [Google Cloud Console](https://console.cloud.google.com/)
+   2. Create or select a project
+   3. Enable these APIs:
+      - Google Calendar API
+      - Google People API
+      - Gmail API
+   4. Go to **APIs & Services** → **Credentials**
+   5. Click **Create Credentials** → **OAuth client ID**
+   6. Choose **Desktop app** as the application type
+   7. Copy the **Client ID** and **Client Secret**
+   8. Add them as environment variables in Railway
+7. **Authenticate and store tokens (REQUIRED - EASIEST METHOD):**
+   
+   **Store tokens as environment variable (no shell needed!):**
+   1. **Authenticate locally first:**
+      ```bash
+      cd mcp-google
+      npm run auth
+      ```
+   2. **Format tokens for Railway (helper script):**
+      ```bash
+      node format-tokens-for-railway.js
+      ```
+      This will output the formatted JSON to copy.
+   
+   **OR manually:**
+   1. **Find your tokens file:**
+      - **Windows:** `%USERPROFILE%\.config\google-calendar-mcp\tokens.json`
+      - **Mac/Linux:** `~/.config/google-calendar-mcp/tokens.json`
+   2. **Copy the entire JSON content** from your `tokens.json` file
+   3. **In Railway → Your MCP service → Variables tab:**
+      - Click **"New Variable"**
+      - Name: `GOOGLE_CALENDAR_TOKENS`
+      - Value: Paste the entire JSON content (as single-line JSON, or with formatting - both work)
+      - Example value:
+        ```json
+        {"access_token":"...","refresh_token":"...","scope":"...","token_type":"Bearer","expiry_date":...}
+        ```
+   4. **Remove the old variable** (if you added it):
+      - Remove: `GOOGLE_CALENDAR_MCP_TOKEN_PATH` (not needed anymore)
+   
+   **That's it!** The server will automatically load tokens from the environment variable.
+9. Note the internal service URL (e.g., `mcp-server-production.up.railway.app`)
+10. **Update `MCP_URL`** in your Flask service to: `http://mcp-server-production.up.railway.app/mcp/calendar`
 
 **Note:** The modified MCP server with HTTP wrapper is now included in your repository, so Railway will deploy it with your modifications.
 
