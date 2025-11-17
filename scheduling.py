@@ -175,7 +175,7 @@ async def get_events_for_window(start_iso: str, end_iso: str, calendar_email: st
     }
     
     result = await mcp_post(payload)
-    
+
     # Extract events from response
     events = []
     if isinstance(result, dict):
@@ -265,7 +265,7 @@ async def parse_time_window_from_query(user_query: str, conversation_history: Li
         )
     )
     orchestrator.add_agent(query_parser_agent)
-    
+
     # Get current time for context
     now = datetime.datetime.now(datetime.timezone.utc)
     current_time_iso = now.isoformat().replace('+00:00', 'Z')
@@ -648,7 +648,7 @@ async def check_busy(
                     calendar_email=calendar_email,
                     rejected_times=rejected_time_set
                 )
-            else:
+                else:
                 # If no description, use default business meeting logic
                 suggested_times, suggested_location = await suggest_inperson_times(
                     duration_minutes=duration_minutes,

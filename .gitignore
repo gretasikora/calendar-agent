@@ -208,5 +208,5 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
-# MCP Google (cloned dependency - not version controlled)
-mcp-google/
+# MCP Google - Now included in repository with modifications
+# mcp-google/

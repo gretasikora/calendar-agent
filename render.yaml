@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: calendar-agent-api
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python api_server.py
+    envVars:
+      - key: API_PORT
+        value: 5000
+      - key: ACCESS_PASSWORD
+        sync: false  # Set this in Render dashboard
+      - key: OPENAI_API_KEY
+        sync: false  # Set this in Render dashboard
+      - key: MCP_URL
+        value: http://localhost:3000/mcp/calendar
+      - key: MCP_USER_ID
+        value: user123
+      - key: MCP_CALENDAR_EMAIL
+        sync: false  # Set this in Render dashboard
+

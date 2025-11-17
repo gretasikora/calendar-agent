@@ -1,3 +1,7 @@
+// Authentication state
+let isAuthenticated = false;
+let authToken = null;
+
 // Conversation state
 let conversationState = {
     step: 'greeting', // greeting -> duration -> purpose -> online -> processing -> done
@@ -13,10 +17,95 @@ let conversationState = {
     fetchRetryCount: 0 // Track retry attempts to prevent infinite loops
 };
 
-// Initialize the chat
+// Initialize the app
 document.addEventListener('DOMContentLoaded', () => {
-    showGreeting();
+    // Check if already authenticated (token in sessionStorage)
+    authToken = sessionStorage.getItem('authToken');
+    if (authToken) {
+        isAuthenticated = true;
+        showApp();
+    } else {
+        showLogin();
+    }
 });
+
+// Show login screen
+function showLogin() {
+    document.getElementById('login-screen').style.display = 'flex';
+    document.getElementById('app-container').style.display = 'none';
+}
+
+// Show main app
+function showApp() {
+    document.getElementById('login-screen').style.display = 'none';
+    document.getElementById('app-container').style.display = 'flex';
+    if (!conversationState.meetingScheduled) {
+        showGreeting();
+    }
+}
+
+// Get API base URL (for development vs production)
+function getApiBaseUrl() {
+    return (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+        ? 'http://localhost:5000'
+        : ''; // Use relative URL in production
+}
+
+// Get headers for API requests (includes auth token)
+function getApiHeaders() {
+    const headers = {
+        'Content-Type': 'application/json',
+    };
+    if (authToken) {
+        headers['Authorization'] = `Bearer ${authToken}`;
+    }
+    return headers;
+}
+
+// Handle login
+async function handleLogin(event) {
+    event.preventDefault();
+    const passwordInput = document.getElementById('password-input');
+    const password = passwordInput.value;
+    const errorDiv = document.getElementById('login-error');
+    
+    // Clear previous error
+    errorDiv.style.display = 'none';
+    errorDiv.textContent = '';
+    
+    try {
+        const response = await fetch(`${getApiBaseUrl()}/api/login`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ password: password })
+        });
+        
+        if (!response.ok) {
+            if (response.status === 401) {
+                throw new Error('Incorrect password');
+            }
+            throw new Error('Login failed');
+        }
+        
+        const data = await response.json();
+        authToken = data.token;
+        isAuthenticated = true;
+        
+        // Store token in sessionStorage (cleared when browser closes)
+        sessionStorage.setItem('authToken', authToken);
+        
+        // Show the app
+        showApp();
+        
+    } catch (error) {
+        errorDiv.textContent = error.message || 'Login failed. Please try again.';
+        errorDiv.style.display = 'block';
+        passwordInput.value = '';
+        passwordInput.focus();
+    }
+}
 
 // Show greeting message
 async function showGreeting() {
@@ -190,11 +279,9 @@ async function processBooking() {
     
     try {
         // Call the backend API
-        const response = await fetch('http://localhost:5000/api/check-availability', {
+        const response = await fetch(`${getApiBaseUrl()}/api/check-availability`, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
+            headers: getApiHeaders(),
             body: JSON.stringify({
                 query: query,
                 conversation_history: conversationState.conversationHistory.slice(0, -1), // Exclude current query
@@ -356,11 +443,9 @@ async function createEvent(startIso, endIso, attendeeEmail) {
     await typewriterMessage('agent', 'Creating the calendar event...', false);
     
     try {
-        const response = await fetch('http://localhost:5000/api/create-event', {
+        const response = await fetch(`${getApiBaseUrl()}/api/create-event`, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
+            headers: getApiHeaders(),
             body: JSON.stringify({
                 start_iso: startIso,
                 end_iso: endIso,
@@ -458,11 +543,9 @@ async function fetchMoreSuggestions() {
     await typewriterMessage('agent', 'Let me find more available times for you...');
     
     try {
-        const response = await fetch('http://localhost:5000/api/check-availability', {
+        const response = await fetch(`${getApiBaseUrl()}/api/check-availability`, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
+            headers: getApiHeaders(),
             body: JSON.stringify({
                 // Use a neutral query that doesn't imply rejections
                 query: `Find available times for a ${conversationState.customDuration ? conversationState.customDuration + ' minute' : conversationState.duration === 30 ? '30 minute' : '1 hour'} ${conversationState.isOnline ? 'online' : 'in-person'} meeting about: ${conversationState.purpose}`,
@@ -605,11 +688,9 @@ async function submitCustomTime() {
     });
     
     try {
-        const response = await fetch('http://localhost:5000/api/check-availability', {
+        const response = await fetch(`${getApiBaseUrl()}/api/check-availability`, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
+            headers: getApiHeaders(),
             body: JSON.stringify({
                 query: query,
                 conversation_history: conversationState.conversationHistory.slice(0, -1),
@@ -703,11 +784,9 @@ async function submitFollowUp() {
     });
     
     try {
-        const response = await fetch('http://localhost:5000/api/check-availability', {
+        const response = await fetch(`${getApiBaseUrl()}/api/check-availability`, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
+            headers: getApiHeaders(),
             body: JSON.stringify({
                 query: query,
                 conversation_history: conversationState.conversationHistory.slice(0, -1)

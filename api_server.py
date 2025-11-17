@@ -9,6 +9,9 @@ import asyncio
 from scheduling import check_busy, create_calendar_event
 import os
 from dotenv import load_dotenv
+import secrets
+from functools import wraps
+import hashlib
 
 # Load environment variables
 load_dotenv()
@@ -16,7 +19,59 @@ load_dotenv()
 app = Flask(__name__)
 CORS(app)  # Enable CORS for frontend
 
+# Simple token storage (in production, use Redis or database)
+# For this simple implementation, we'll use a single token
+AUTH_TOKEN = os.getenv('AUTH_TOKEN') or secrets.token_urlsafe(32)
+ACCESS_PASSWORD = os.getenv('ACCESS_PASSWORD') or 'changeme'
+
+# Store active sessions (in production, use Redis or database)
+active_tokens = set()
+
+def require_auth(f):
+    """Decorator to require authentication for API endpoints."""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        auth_header = request.headers.get('Authorization')
+        if not auth_header:
+            return jsonify({'error': 'Authentication required'}), 401
+        
+        try:
+            token = auth_header.split(' ')[1]  # Extract token from "Bearer <token>"
+            if token not in active_tokens:
+                return jsonify({'error': 'Invalid or expired token'}), 401
+        except (IndexError, AttributeError):
+            return jsonify({'error': 'Invalid authorization header'}), 401
+        
+        return f(*args, **kwargs)
+    return decorated_function
+
+@app.route('/api/login', methods=['POST'])
+def login():
+    """
+    Login endpoint. Validates password and returns auth token.
+    """
+    try:
+        data = request.json
+        password = data.get('password', '')
+        
+        # Simple password check (in production, use proper password hashing)
+        if password == ACCESS_PASSWORD:
+            # Generate a session token
+            token = secrets.token_urlsafe(32)
+            active_tokens.add(token)
+            
+            return jsonify({
+                'token': token,
+                'message': 'Login successful'
+            }), 200
+        else:
+            return jsonify({'error': 'Incorrect password'}), 401
+    
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/check-availability', methods=['POST'])
+@require_auth
 def check_availability():
     """
     Endpoint to check calendar availability.
@@ -81,6 +136,7 @@ def check_availability():
         }), 500
 
 @app.route('/api/create-event', methods=['POST'])
+@require_auth
 def create_event():
     """
     Endpoint to create a calendar event.
@@ -139,9 +195,30 @@ def health():
     """Health check endpoint."""
     return jsonify({'status': 'ok'})
 
+# Serve frontend static files (for deployment)
+@app.route('/')
+def index():
+    """Serve the main frontend page."""
+    from flask import send_from_directory
+    return send_from_directory('frontend', 'index.html')
+
+@app.route('/<path:path>')
+def serve_static(path):
+    """Serve static files from frontend directory."""
+    from flask import send_from_directory
+    import os
+    # Only serve files that exist in frontend directory
+    if os.path.exists(os.path.join('frontend', path)):
+        return send_from_directory('frontend', path)
+    else:
+        # Fallback to index.html for client-side routing
+        return send_from_directory('frontend', 'index.html')
+
 if __name__ == '__main__':
     port = int(os.getenv('API_PORT', 5000))
     print(f"Starting API server on http://localhost:{port}")
     print(f"Frontend should be served from the 'frontend' directory")
+    print(f"Access password: {ACCESS_PASSWORD}")
+    print(f"Set ACCESS_PASSWORD environment variable to change the password")
     app.run(host='0.0.0.0', port=port, debug=True)
 
