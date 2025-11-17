@@ -28,6 +28,22 @@ def format_iso_datetime(dt: datetime.datetime) -> str:
     
     return iso_str
 
+def is_time_rejected(start_iso: str, end_iso: str, rejected_times: set = None) -> bool:
+    """
+    Check if a time slot has been rejected.
+    
+    Args:
+        start_iso: Start time in ISO format
+        end_iso: End time in ISO format
+        rejected_times: Set of (start_iso, end_iso) tuples
+    
+    Returns:
+        True if the time has been rejected, False otherwise
+    """
+    if not rejected_times:
+        return False
+    return (start_iso, end_iso) in rejected_times
+
 # ---------------------------
 # Meeting Analysis
 # ---------------------------
@@ -107,7 +123,8 @@ async def suggest_online_times(
     start_date: datetime.datetime,
     end_date: datetime.datetime,
     mcp_post_func,
-    calendar_email: str = None
+    calendar_email: str = None,
+    rejected_times: set = None
 ) -> List[Dict[str, str]]:
     """
     Suggest times for online meetings based on preferences.
@@ -127,7 +144,10 @@ async def suggest_online_times(
     # Preference 2: Try to schedule around other online meetings
     online_events = [e for e in events if is_online_meeting(e)]
     
+    # Collect suggestions from all online events, but limit to avoid too many
     for event in online_events:
+        if len(suggestions) >= 5:  # Stop if we have enough suggestions
+            break
         event_start_str = event.get("start", {}).get("dateTime") or event.get("start", {}).get("date", "")
         event_end_str = event.get("end", {}).get("dateTime") or event.get("end", {}).get("date", "")
         if not event_start_str or not event_end_str:
@@ -168,6 +188,14 @@ async def suggest_online_times(
         
         # Suggest right before (if within preferred window, in the future, and not today)
         before_time = event_start - datetime.timedelta(minutes=duration_minutes)
+        # Debug: Log what we're checking
+        print(f"[DEBUG suggest_online_times] Checking before suggestion:")
+        print(f"  Event: {event.get('summary', 'Unknown')} at {event_start}")
+        print(f"  before_time: {before_time}, now: {now}")
+        print(f"  Checks: before_time > now: {before_time > now}, date > now.date(): {before_time.date() > now.date()}")
+        print(f"  Hour check: {before_time.hour} > {preferred_start_hour} or ({before_time.hour} == {preferred_start_hour} and {before_time.minute} >= {preferred_start_minute})")
+        print(f"  Hour < end: {before_time.hour < preferred_end_hour}")
+        
         if (before_time > now and  # Must be in the future
             before_time.date() > now.date() and  # Must not be today
             (before_time.hour > preferred_start_hour or 
@@ -175,14 +203,33 @@ async def suggest_online_times(
             if before_time.hour < preferred_end_hour:
                 # Check if this slot is free
                 slot_end = event_start
-                if await is_slot_free(before_time, slot_end, events, mcp_post_func, buffer_minutes=0, calendar_email=calendar_email):
-                    suggestions.append({
-                        "start_iso": format_iso_datetime(before_time),
-                        "end_iso": format_iso_datetime(slot_end),
-                        "reason": f"Right before your online meeting at {format_time(event_start)}"
-                    })
+                start_iso = format_iso_datetime(before_time)
+                end_iso = format_iso_datetime(slot_end)
+                if not is_time_rejected(start_iso, end_iso, rejected_times):
+                    is_free = await is_slot_free(before_time, slot_end, events, mcp_post_func, buffer_minutes=0, calendar_email=calendar_email)
+                    print(f"[DEBUG] Before suggestion {before_time} - {slot_end}: is_free={is_free}")
+                    if is_free:
+                        # Use generic reason - don't reveal information about other meetings
+                        suggestions.append({
+                            "start_iso": start_iso,
+                            "end_iso": end_iso,
+                            "reason": "Available time slot"  # Generic reason, no private info
+                        })
+                        print(f"[DEBUG] [OK] Added before suggestion: {start_iso} - {end_iso}")
+                        if len(suggestions) >= 5:  # Stop if we have enough
+                            break
+                    else:
+                        print(f"[DEBUG] [FAIL] Before suggestion {before_time} - {slot_end} is NOT free")
+                else:
+                    print(f"[DEBUG] [SKIP] Before suggestion {before_time} - {slot_end} was already rejected")
+            else:
+                print(f"[DEBUG] [FAIL] Before suggestion hour {before_time.hour} >= preferred_end_hour {preferred_end_hour}")
+        else:
+            print(f"[DEBUG] [FAIL] Before suggestion {before_time} failed initial checks")
         
         # Suggest right after (if within preferred window, in the future, and not today)
+        if len(suggestions) >= 5:  # Stop if we have enough before checking "after"
+            break
         after_time = event_end
         slot_end = after_time + datetime.timedelta(minutes=duration_minutes)
         if (after_time > now and  # Must be in the future
@@ -191,44 +238,77 @@ async def suggest_online_times(
             slot_end.hour <= preferred_end_hour):
             # Check if this slot is free (with 15 min buffer if previous was in-person)
             buffer = 15 if not is_online_meeting(event) else 0
-            if await is_slot_free(after_time, slot_end, events, mcp_post_func, buffer_minutes=buffer, calendar_email=calendar_email):
-                suggestions.append({
-                    "start_iso": format_iso_datetime(after_time),
-                    "end_iso": format_iso_datetime(slot_end),
-                    "reason": f"Right after your online meeting at {format_time(event_end)}"
-                })
+            start_iso = format_iso_datetime(after_time)
+            end_iso = format_iso_datetime(slot_end)
+            if not is_time_rejected(start_iso, end_iso, rejected_times):
+                if await is_slot_free(after_time, slot_end, events, mcp_post_func, buffer_minutes=buffer, calendar_email=calendar_email):
+                    # Use generic reason - don't reveal information about other meetings
+                    suggestions.append({
+                        "start_iso": start_iso,
+                        "end_iso": end_iso,
+                        "reason": "Available time slot"  # Generic reason, no private info
+                    })
+                    if len(suggestions) >= 5:  # Stop if we have enough
+                        break
     
-    # Preference 4: Fallback to 6:00 PM on free weekdays
-    if not suggestions:
+    # Preference 3: Continue generating suggestions even if we have some
+    # This ensures we have multiple options (before/after + fallbacks)
+    # Preference 4: Fallback to 6:00 PM, 5:30 PM, and 5:00 PM on free weekdays
+    if len(suggestions) < 5:  # Generate more if we don't have enough yet
         # Always start from tomorrow (never suggest for today)
         today = now.date()
         start_date_for_suggestions = today + datetime.timedelta(days=1)
         
+        # Times to suggest: 6:00 PM, 5:30 PM, 5:00 PM (in that order)
+        fallback_times = [
+            (18, 0),   # 6:00 PM
+            (17, 30),  # 5:30 PM
+            (17, 0)    # 5:00 PM
+        ]
+        
         for day_offset in range(14):  # Check next 14 days to find available slots
+            if len(suggestions) >= 5:  # Stop if we have enough
+                break
             check_date = start_date_for_suggestions + datetime.timedelta(days=day_offset)
             if check_date.weekday() < 5:  # Weekday (Mon-Fri)
-                suggested_time = datetime.datetime.combine(
-                    check_date,
-                    datetime.time(18, 0)  # 6:00 PM
-                ).replace(tzinfo=datetime.timezone.utc)
-                slot_end = suggested_time + datetime.timedelta(minutes=duration_minutes)
-                
-                # Ensure it's in the future
-                if suggested_time > now and slot_end.hour <= preferred_end_hour:
-                    # NOTE: This is in suggest_online_times, so is_inperson_meeting=False
-                    # But we should still check for conflicts with in-person events
-                    # For online meetings, we don't need the 30min buffer, but we should still avoid conflicts
-                    if await is_slot_free(suggested_time, slot_end, events, mcp_post_func, buffer_minutes=0, calendar_email=calendar_email, is_inperson_meeting=False):
-                        suggestions.append({
-                            "start_iso": format_iso_datetime(suggested_time),
-                            "end_iso": format_iso_datetime(slot_end),
-                            "reason": f"6:00 PM on {check_date.strftime('%A, %B %d')}"
-                        })
-                        if len(suggestions) >= 3:
-                            break
+                # Try each time slot for this date
+                for hour, minute in fallback_times:
+                    if len(suggestions) >= 5:  # Stop if we have enough
+                        break
+                    suggested_time = datetime.datetime.combine(
+                        check_date,
+                        datetime.time(hour, minute)
+                    ).replace(tzinfo=datetime.timezone.utc)
+                    slot_end = suggested_time + datetime.timedelta(minutes=duration_minutes)
+                    
+                    # Ensure it's in the future and within preferred hours
+                    if suggested_time > now and slot_end.hour <= preferred_end_hour:
+                        start_iso = format_iso_datetime(suggested_time)
+                        end_iso = format_iso_datetime(slot_end)
+                        if not is_time_rejected(start_iso, end_iso, rejected_times):
+                            # NOTE: This is in suggest_online_times, so is_inperson_meeting=False
+                            # But we should still check for conflicts with in-person events
+                            # For online meetings, we don't need the 30min buffer, but we should still avoid conflicts
+                            if await is_slot_free(suggested_time, slot_end, events, mcp_post_func, buffer_minutes=0, calendar_email=calendar_email, is_inperson_meeting=False):
+                                # Format time string for display
+                                if hour == 18:
+                                    time_str = "6:00 PM"
+                                elif hour == 17 and minute == 30:
+                                    time_str = "5:30 PM"
+                                elif hour == 17:
+                                    time_str = "5:00 PM"
+                                else:
+                                    time_str = f"{hour}:{minute:02d} PM" if hour >= 12 else f"{hour}:{minute:02d} AM"
+                                suggestions.append({
+                                    "start_iso": start_iso,
+                                    "end_iso": end_iso,
+                                    "reason": f"{time_str} on {check_date.strftime('%A, %B %d')}"
+                                })
+                                if len(suggestions) >= 5:
+                                    break
     
     # Preference 5: Saturday 10:30 AM or next week
-    if not suggestions:
+    if len(suggestions) < 5:  # Generate more if we don't have enough yet
         # Try Saturday 10:30 AM - always skip today
         today = now.date()
         days_until_saturday = (5 - today.weekday()) % 7
@@ -245,12 +325,15 @@ async def suggest_online_times(
         
         # Ensure it's in the future
         if saturday_time > now:
-            if await is_slot_free(saturday_time, slot_end, events, mcp_post_func, buffer_minutes=0, calendar_email=calendar_email):
-                suggestions.append({
-                    "start_iso": format_iso_datetime(saturday_time),
-                    "end_iso": format_iso_datetime(slot_end),
-                    "reason": f"Saturday 10:30 AM ({saturday_date.strftime('%B %d')})"
-                })
+            start_iso = format_iso_datetime(saturday_time)
+            end_iso = format_iso_datetime(slot_end)
+            if not is_time_rejected(start_iso, end_iso, rejected_times):
+                if await is_slot_free(saturday_time, slot_end, events, mcp_post_func, buffer_minutes=0, calendar_email=calendar_email):
+                    suggestions.append({
+                        "start_iso": start_iso,
+                        "end_iso": end_iso,
+                        "reason": f"Saturday 10:30 AM ({saturday_date.strftime('%B %d')})"
+                    })
     
     return suggestions[:5]  # Return top 5 suggestions
 
@@ -265,7 +348,8 @@ async def suggest_inperson_times(
     start_date: datetime.datetime,
     end_date: datetime.datetime,
     mcp_post_func,
-    calendar_email: str = None
+    calendar_email: str = None,
+    rejected_times: set = None
 ) -> Tuple[List[Dict[str, str]], Optional[str]]:
     """
     Suggest times for in-person meetings based on preferences.
@@ -307,12 +391,15 @@ async def suggest_inperson_times(
             
             # Only suggest if in the future
             if lunch_time > now:
-                if await is_slot_free(lunch_time, lunch_end, events, mcp_post_func, buffer_minutes=0, calendar_email=calendar_email, is_inperson_meeting=True):
-                    suggestions.append({
-                        "start_iso": format_iso_datetime(lunch_time),
-                        "end_iso": format_iso_datetime(lunch_end),
-                        "reason": f"Lunch time on {check_date.strftime('%A, %B %d')}"
-                    })
+                start_iso = format_iso_datetime(lunch_time)
+                end_iso = format_iso_datetime(lunch_end)
+                if not is_time_rejected(start_iso, end_iso, rejected_times):
+                    if await is_slot_free(lunch_time, lunch_end, events, mcp_post_func, buffer_minutes=0, calendar_email=calendar_email, is_inperson_meeting=True):
+                        suggestions.append({
+                            "start_iso": start_iso,
+                            "end_iso": end_iso,
+                            "reason": f"Lunch time on {check_date.strftime('%A, %B %d')}"
+                        })
             
             # Dinner time (6:30 PM+)
             # IMPORTANT: Create time in UTC, but this represents 6:30 PM in the user's local timezone
@@ -329,13 +416,19 @@ async def suggest_inperson_times(
             
             # Only suggest if in the future
             if dinner_time > now:
+                # Check if this time was already rejected
+                start_iso = format_iso_datetime(dinner_time)
+                end_iso = format_iso_datetime(dinner_end)
+                if rejected_times and (start_iso, end_iso) in rejected_times:
+                    continue  # Skip rejected times
+                
                 is_free = await is_slot_free(dinner_time, dinner_end, events, mcp_post_func, buffer_minutes=0, calendar_email=calendar_email, is_inperson_meeting=True)
                 if is_free:
                     print(f"[DEBUG] Dinner time {dinner_time} is FREE")
                 if is_free:
                     suggestions.append({
-                        "start_iso": format_iso_datetime(dinner_time),
-                        "end_iso": format_iso_datetime(dinner_end),
+                        "start_iso": start_iso,
+                        "end_iso": end_iso,
                         "reason": f"Dinner time on {check_date.strftime('%A, %B %d')}"
                     })
             
@@ -358,14 +451,17 @@ async def suggest_inperson_times(
             
             # Only suggest if in the future
             if coffee_time > now:
-                if await is_slot_free(coffee_time, coffee_end, events, mcp_post_func, buffer_minutes=0, calendar_email=calendar_email, is_inperson_meeting=True):
-                    suggestions.append({
-                        "start_iso": format_iso_datetime(coffee_time),
-                        "end_iso": format_iso_datetime(coffee_end),
-                        "reason": f"4:00 PM on {check_date.strftime('%A, %B %d')}"
-                    })
-                    if len(suggestions) >= 3:
-                        break
+                start_iso = format_iso_datetime(coffee_time)
+                end_iso = format_iso_datetime(coffee_end)
+                if not is_time_rejected(start_iso, end_iso, rejected_times):
+                    if await is_slot_free(coffee_time, coffee_end, events, mcp_post_func, buffer_minutes=0, calendar_email=calendar_email, is_inperson_meeting=True):
+                        suggestions.append({
+                            "start_iso": start_iso,
+                            "end_iso": end_iso,
+                            "reason": f"4:00 PM on {check_date.strftime('%A, %B %d')}"
+                        })
+                        if len(suggestions) >= 3:
+                            break
     
     # Preference 2: If initial suggestions don't work, iterate
     if not suggestions:
@@ -387,14 +483,17 @@ async def suggest_inperson_times(
                 
                 # Only suggest if in the future
                 if evening_time > now:
-                    if await is_slot_free(evening_time, evening_end, events, mcp_post_func, buffer_minutes=0, calendar_email=calendar_email, is_inperson_meeting=True):
-                        suggestions.append({
-                            "start_iso": format_iso_datetime(evening_time),
-                            "end_iso": format_iso_datetime(evening_end),
-                            "reason": f"Evening on {check_date.strftime('%A, %B %d')}"
-                        })
-                        if len(suggestions) >= 3:
-                            break
+                    start_iso = format_iso_datetime(evening_time)
+                    end_iso = format_iso_datetime(evening_end)
+                    if not is_time_rejected(start_iso, end_iso, rejected_times):
+                        if await is_slot_free(evening_time, evening_end, events, mcp_post_func, buffer_minutes=0, calendar_email=calendar_email, is_inperson_meeting=True):
+                            suggestions.append({
+                                "start_iso": start_iso,
+                                "end_iso": end_iso,
+                                "reason": f"Evening on {check_date.strftime('%A, %B %d')}"
+                            })
+                            if len(suggestions) >= 3:
+                                break
         else:
             # Business: 3-5 PM next week
             today = now.date()
@@ -413,14 +512,17 @@ async def suggest_inperson_times(
                         
                         # Only suggest if in the future
                         if business_time > now:
-                            if await is_slot_free(business_time, business_end, events, mcp_post_func, buffer_minutes=0, calendar_email=calendar_email, is_inperson_meeting=True):
-                                suggestions.append({
-                                    "start_iso": format_iso_datetime(business_time),
-                                    "end_iso": format_iso_datetime(business_end),
-                                    "reason": f"{hour}:00 PM on {check_date.strftime('%A, %B %d')}"
-                                })
-                                if len(suggestions) >= 3:
-                                    break
+                            start_iso = format_iso_datetime(business_time)
+                            end_iso = format_iso_datetime(business_end)
+                            if not is_time_rejected(start_iso, end_iso, rejected_times):
+                                if await is_slot_free(business_time, business_end, events, mcp_post_func, buffer_minutes=0, calendar_email=calendar_email, is_inperson_meeting=True):
+                                    suggestions.append({
+                                        "start_iso": start_iso,
+                                        "end_iso": end_iso,
+                                        "reason": f"{hour}:00 PM on {check_date.strftime('%A, %B %d')}"
+                                    })
+                                    if len(suggestions) >= 3:
+                                        break
                     if len(suggestions) >= 3:
                         break
     

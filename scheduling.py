@@ -3,6 +3,7 @@ import os
 import asyncio
 import json
 import re
+import uuid
 from typing import List, Dict, Optional, Tuple
 import datetime
 from dateutil import parser as dateparser
@@ -306,7 +307,9 @@ Example response:
 {{"start_iso": "2025-11-14T15:00:00Z", "end_iso": "2025-11-14T15:30:00Z"}}
 """
     
-    response = await orchestrator.route_request(parser_prompt, user_id=MCP_USER_ID, session_id="time-parser")
+    # Use a unique session_id to prevent memory from previous requests
+    unique_session_id = f"time_parser_{uuid.uuid4().hex[:8]}"
+    response = await orchestrator.route_request(parser_prompt, user_id=MCP_USER_ID, session_id=unique_session_id)
     
     # Extract JSON from response
     response_text = ""
@@ -381,7 +384,7 @@ async def format_reply_with_llm(
     formatter_agent = OpenAIAgent(
         options=OpenAIAgentOptions(
             name="Scheduler Assistant",
-            description="A helper that formats calendar availability answers.",
+            description="A calendar assistant that suggests meeting times. NEVER says 'I understand those times don't work' or asks users to suggest times. Always presents ONE time and asks if it works.",
             api_key=OPENAI_KEY,
             model="gpt-4o-mini",
             streaming=False
@@ -389,8 +392,13 @@ async def format_reply_with_llm(
     )
     orchestrator.add_agent(formatter_agent)
 
+    # Don't include conversation history when we have suggestions to avoid LLM seeing rejections
+    # This prevents the LLM from generating "I understand those times don't work" messages
     history_context = ""
-    if conversation_history and len(conversation_history) > 0:
+    if suggested_times and len(suggested_times) > 0:
+        # Skip conversation history when we have suggestions - just present the time
+        history_context = ""
+    elif conversation_history and len(conversation_history) > 0:
         history_context = "\n\nPrevious conversation (for context):\n"
         for turn in conversation_history[-3:]:  # Last 3 turns for context
             user_msg = turn.get("user", "")
@@ -416,8 +424,7 @@ async def format_reply_with_llm(
             start_str = start_dt.strftime("%A, %B %d at %I:%M %p")
             end_str = end_dt.strftime("%I:%M %p")
             suggested_times_text = f"{start_str} - {end_str}"
-            if reason:
-                suggested_times_text += f" ({reason})"
+            # DO NOT include reason - it contains private information about other meetings
         except:
             suggested_times_text = f"{start_iso} - {end_iso}"
     
@@ -446,10 +453,13 @@ Best available time based on preferences: {suggested_times_text}{location_text}
 
 Provide a direct response that presents this ONE time suggestion and asks if it works. Be concise - no fluff. Example: "How about {suggested_times_text}{location_text}? Does that work for you?"
 
-IMPORTANT: 
+CRITICAL RULES - FOLLOW THESE EXACTLY:
 - Only mention this ONE time. Do not list multiple times.
 - Be direct and concise. No pleasantries or fluff.
-- Ask if this specific time works for them."""
+- Ask if this specific time works for them.
+- Simply present the time and ask if it works. Example: "How about {suggested_times_text}{location_text}? Does that work for you?"
+- If you must vary the phrasing, use: "What about [time]?" or "Does [time] work for you?" - but NEVER mention rejections or ask the user to suggest a time
+- Your response MUST be exactly in this format: "How about [time]? Does that work for you?" or "What about [time]? Does that work for you?" """
     else:
         # No suggestions available
         user_prompt = f"""{system_prompt}
@@ -461,7 +471,10 @@ Availability: {availability_status}
 
 Format a natural response."""
 
-    response = await orchestrator.route_request(user_prompt, user_id=MCP_USER_ID, session_id="response_formatter_session")
+    # Use a unique session_id to prevent memory from previous requests
+    # This ensures the LLM doesn't remember rejections from previous interactions
+    unique_session_id = f"response_formatter_{uuid.uuid4().hex[:8]}"
+    response = await orchestrator.route_request(user_prompt, user_id=MCP_USER_ID, session_id=unique_session_id)
     
     # Extract response content
     response_text = ""
@@ -492,7 +505,9 @@ async def check_busy(
     conversation_history: List[Dict[str, str]] = None,
     meeting_type: Optional[str] = None,
     meeting_description: Optional[str] = None,
-    duration_minutes: Optional[int] = None
+    duration_minutes: Optional[int] = None,
+    rejected_times: Optional[List[Dict[str, str]]] = None,
+    skip_llm_formatting: bool = False  # If True, skip LLM and return simple message
 ) -> Dict:
     """
     Top-level function that orchestrates the two-agent workflow.
@@ -600,6 +615,15 @@ async def check_busy(
     
     # Always suggest times if meeting type and duration are provided (proactive suggestions)
     if meeting_type and duration_minutes:
+        # Normalize rejected_times to a set for fast lookup
+        rejected_time_set = set()
+        if rejected_times:
+            for rejected in rejected_times:
+                start_iso = rejected.get('start_iso', '')
+                end_iso = rejected.get('end_iso', '')
+                if start_iso and end_iso:
+                    rejected_time_set.add((start_iso, end_iso))
+        
         # Use preferences to suggest times based on meeting type
         if meeting_type == "online":
             suggested_times = await suggest_online_times(
@@ -608,7 +632,8 @@ async def check_busy(
                 start_date=now,
                 end_date=query_end,
                 mcp_post_func=mcp_post,
-                calendar_email=calendar_email
+                calendar_email=calendar_email,
+                rejected_times=rejected_time_set
             )
         elif meeting_type == "in-person":
             # For in-person, we need description to determine if it's friendly or business
@@ -620,7 +645,8 @@ async def check_busy(
                     start_date=now,
                     end_date=query_end,
                     mcp_post_func=mcp_post,
-                    calendar_email=calendar_email
+                    calendar_email=calendar_email,
+                    rejected_times=rejected_time_set
                 )
             else:
                 # If no description, use default business meeting logic
@@ -631,20 +657,54 @@ async def check_busy(
                     start_date=now,
                     end_date=query_end,
                     mcp_post_func=mcp_post,
-                    calendar_email=calendar_email
+                    calendar_email=calendar_email,
+                    rejected_times=rejected_time_set
                 )
+        
+        # Filter out rejected times from final suggestions
+        if rejected_time_set:
+            suggested_times = [
+                t for t in suggested_times 
+                if (t.get('start_iso'), t.get('end_iso')) not in rejected_time_set
+            ]
     
     # Step 5: Agent 2 - Format response conversationally
-    assistant_reply = await format_reply_with_llm(
-        is_busy, 
-        overlaps_list, 
-        user_query, 
-        conversation_history,
-        suggested_times=suggested_times,
-        suggested_location=suggested_location,
-        meeting_type=meeting_type,
-        duration_minutes=duration_minutes
-    )
+    # Skip LLM formatting if requested (e.g., when fetching more suggestions)
+    # This prevents the LLM from generating "I understand those times don't work" messages
+    if skip_llm_formatting:
+        print(f"[DEBUG] Skipping LLM formatting - using template message")
+        # Use simple template message when fetching more suggestions
+        if suggested_times and len(suggested_times) > 0:
+            first_suggestion = suggested_times[0]
+            start_iso = first_suggestion.get("start_iso", "")
+            end_iso = first_suggestion.get("end_iso", "")
+            try:
+                start_dt = dateparser.isoparse(start_iso)
+                end_dt = dateparser.isoparse(end_iso)
+                start_str = start_dt.strftime("%A, %B %d at %I:%M %p")
+                end_str = end_dt.strftime("%I:%M %p")
+                suggested_times_text = f"{start_str} - {end_str}"
+            except:
+                suggested_times_text = f"{start_iso} - {end_iso}"
+            location_text = f" at {suggested_location}" if suggested_location else ""
+            assistant_reply = f"What about {suggested_times_text}{location_text}? Does that work for you?"
+            print(f"[DEBUG] Generated template message: {assistant_reply}")
+        else:
+            assistant_reply = "Let me check for more available times..."
+            print(f"[DEBUG] No suggestions - using fallback message")
+    else:
+        print(f"[DEBUG] Using LLM formatting")
+        assistant_reply = await format_reply_with_llm(
+            is_busy,
+            overlaps_list,
+            user_query,
+            conversation_history,
+            suggested_times=suggested_times,
+            suggested_location=suggested_location,
+            meeting_type=meeting_type,
+            duration_minutes=duration_minutes
+        )
+        print(f"[DEBUG] LLM generated response: {assistant_reply[:100]}...")
     
     # Return dict with response and suggestions
     result = {

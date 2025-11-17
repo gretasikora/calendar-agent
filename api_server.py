@@ -29,6 +29,8 @@ def check_availability():
         meeting_type = data.get('meeting_type')  # "online" or "in-person"
         meeting_description = data.get('meeting_description')  # Purpose/description
         duration_minutes = data.get('duration_minutes')  # Duration in minutes
+        rejected_times = data.get('rejected_times', [])  # Times that have been rejected
+        skip_llm_formatting = data.get('skip_llm_formatting', False)  # Skip LLM when fetching more suggestions
         
         if not query:
             return jsonify({'error': 'Query is required'}), 400
@@ -43,7 +45,9 @@ def check_availability():
                     conversation_history,
                     meeting_type=meeting_type,
                     meeting_description=meeting_description,
-                    duration_minutes=duration_minutes
+                    duration_minutes=duration_minutes,
+                    rejected_times=rejected_times,
+                    skip_llm_formatting=skip_llm_formatting
                 )
             )
         finally:

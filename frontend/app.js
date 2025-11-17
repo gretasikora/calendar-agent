@@ -9,7 +9,8 @@ let conversationState = {
     meetingScheduled: false, // Track if meeting has been scheduled
     suggestedTimes: [], // All suggested times from the backend
     currentSuggestionIndex: 0, // Current suggestion being shown
-    rejectionCount: 0 // Number of times user has rejected suggestions
+    rejectedTimes: [], // Track rejected times to avoid suggesting them again
+    fetchRetryCount: 0 // Track retry attempts to prevent infinite loops
 };
 
 // Initialize the chat
@@ -199,7 +200,8 @@ async function processBooking() {
                 conversation_history: conversationState.conversationHistory.slice(0, -1), // Exclude current query
                 meeting_type: conversationState.isOnline ? 'online' : 'in-person',
                 meeting_description: conversationState.purpose,
-                duration_minutes: conversationState.duration
+                duration_minutes: conversationState.duration,
+                skip_llm_formatting: true // Skip LLM - frontend generates its own message from suggestions
             })
         });
         
@@ -217,27 +219,37 @@ async function processBooking() {
         }
         
         const data = await response.json();
-        const agentResponse = data.response || 'I was unable to check my availability. Please try again.';
         const suggestedTime = data.suggested_time;
         const suggestedTimes = data.suggested_times || [];
         const suggestedLocation = data.suggested_location;
         
-        // Store all suggested times and reset rejection count
+        // Store all suggested times and reset index (keep rejected times)
         conversationState.suggestedTimes = suggestedTimes;
         conversationState.currentSuggestionIndex = 0;
-        conversationState.rejectionCount = 0;
         
-        // Update conversation history
-        conversationState.conversationHistory[conversationState.conversationHistory.length - 1].assistant = agentResponse;
-        
-        // Show response
-        await typewriterMessage('agent', agentResponse);
-        
-        // Show Accept/Reject buttons if a time was suggested
+        // Generate our own message from the first suggestion (don't use LLM response)
+        // This prevents the LLM from generating "I understand" messages
         if (suggestedTime) {
+            const startDate = new Date(suggestedTime.start_iso);
+            const endDate = new Date(suggestedTime.end_iso);
+            const timeStr = formatSuggestionTime(startDate, endDate);
+            let agentResponse = `How about ${timeStr}?`;
+            if (suggestedLocation) {
+                agentResponse += ` at ${suggestedLocation}`;
+            }
+            agentResponse += ` Does that work for you?`;
+            
+            // Update conversation history
+            conversationState.conversationHistory[conversationState.conversationHistory.length - 1].assistant = agentResponse;
+            
+            // Show response
+            await typewriterMessage('agent', agentResponse);
             showSuggestionButtons(suggestedTime, suggestedLocation);
         } else {
-            // Show follow-up options if no suggestion
+            // No suggestions - use LLM response as fallback
+            const agentResponse = data.response || 'I was unable to check my availability. Please try again.';
+            conversationState.conversationHistory[conversationState.conversationHistory.length - 1].assistant = agentResponse;
+            await typewriterMessage('agent', agentResponse);
             showFollowUp();
         }
         
@@ -404,18 +416,13 @@ async function createEvent(startIso, endIso, attendeeEmail) {
 
 // Reject suggestion
 async function rejectSuggestion() {
-    conversationState.rejectionCount++;
-    
-    // If we've rejected 3 times, let user suggest a time
-    if (conversationState.rejectionCount >= 3) {
-        const inputSection = document.getElementById('input-section');
-        inputSection.innerHTML = '';
-        
-        await typewriterMessage('agent', 'I understand those times don\'t work for you. Please suggest a time that works better for you.');
-        
-        // Show text input for user to suggest a time
-        showCustomTimeInput();
-        return;
+    // Add current suggestion to rejected list
+    const currentSuggestion = conversationState.suggestedTimes[conversationState.currentSuggestionIndex];
+    if (currentSuggestion) {
+        conversationState.rejectedTimes.push({
+            start_iso: currentSuggestion.start_iso,
+            end_iso: currentSuggestion.end_iso
+        });
     }
     
     // Get the next suggestion from the list
@@ -424,7 +431,7 @@ async function rejectSuggestion() {
     const inputSection = document.getElementById('input-section');
     inputSection.innerHTML = '';
     
-    // Check if we have more suggestions
+    // Check if we have more suggestions in the current list
     if (conversationState.currentSuggestionIndex < conversationState.suggestedTimes.length) {
         const nextSuggestion = conversationState.suggestedTimes[conversationState.currentSuggestionIndex];
         const suggestedLocation = conversationState.suggestedLocation;
@@ -445,8 +452,110 @@ async function rejectSuggestion() {
         // Show the next suggestion buttons
         showSuggestionButtons(nextSuggestion, suggestedLocation);
     } else {
-        // No more suggestions, let user suggest a time
-        await typewriterMessage('agent', 'I\'ve run out of suggestions. Please suggest a time that works better for you.');
+        // No more suggestions in current list, fetch more from backend
+        await fetchMoreSuggestions();
+    }
+}
+
+// Fetch more suggestions from backend, excluding rejected times
+async function fetchMoreSuggestions() {
+    const inputSection = document.getElementById('input-section');
+    inputSection.innerHTML = '';
+    
+    await typewriterMessage('agent', 'Let me find more available times for you...');
+    
+    try {
+        const response = await fetch('http://localhost:5000/api/check-availability', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                // Use a neutral query that doesn't imply rejections
+                query: `Find available times for a ${conversationState.customDuration ? conversationState.customDuration + ' minute' : conversationState.duration === 30 ? '30 minute' : '1 hour'} ${conversationState.isOnline ? 'online' : 'in-person'} meeting about: ${conversationState.purpose}`,
+                conversation_history: [], // Don't pass conversation history to avoid LLM seeing rejections
+                meeting_type: conversationState.isOnline ? 'online' : 'in-person',
+                meeting_description: conversationState.purpose,
+                duration_minutes: conversationState.duration,
+                rejected_times: conversationState.rejectedTimes, // Pass rejected times to exclude them
+                skip_llm_formatting: true // Skip LLM to avoid "I understand" messages
+            })
+        });
+        
+        if (!response.ok) {
+            let errorMessage = 'Failed to get more suggestions';
+            try {
+                const errorData = await response.json();
+                errorMessage = errorData.error || errorMessage;
+            } catch (e) {
+                console.error('API Error (no JSON):', response.status, response.statusText);
+            }
+            throw new Error(errorMessage);
+        }
+        
+        const data = await response.json();
+        // IGNORE the LLM response - we'll generate our own message
+        const suggestedTime = data.suggested_time;
+        const suggestedTimes = data.suggested_times || [];
+        const suggestedLocation = data.suggested_location;
+        
+        // Filter out any times that are already in rejectedTimes
+        const filteredTimes = suggestedTimes.filter(suggestion => {
+            return !conversationState.rejectedTimes.some(rejected => 
+                rejected.start_iso === suggestion.start_iso && rejected.end_iso === suggestion.end_iso
+            );
+        });
+        
+        if (filteredTimes.length === 0) {
+            // No more unique suggestions from this batch - keep trying
+            conversationState.fetchRetryCount = (conversationState.fetchRetryCount || 0) + 1;
+            
+            // Limit retries to prevent infinite loops (max 3 retries)
+            if (conversationState.fetchRetryCount > 3) {
+                // After 3 retries, show custom input as last resort
+                await typewriterMessage('agent', 'I\'m having trouble finding available times. Please suggest a time that works for you.');
+                showCustomTimeInput();
+                conversationState.fetchRetryCount = 0; // Reset for next time
+                return;
+            }
+            
+            // Retry the request to get more suggestions
+            await typewriterMessage('agent', 'Let me check for more available times...');
+            // Retry the same request - the backend should generate more suggestions
+            setTimeout(() => {
+                fetchMoreSuggestions(); // Retry recursively
+            }, 500);
+            return;
+        }
+        
+        // Reset retry count on success
+        conversationState.fetchRetryCount = 0;
+        
+        // Update suggested times (append new ones, avoiding duplicates)
+        const existingTimeKeys = new Set(conversationState.suggestedTimes.map(t => `${t.start_iso}-${t.end_iso}`));
+        const newTimes = filteredTimes.filter(t => !existingTimeKeys.has(`${t.start_iso}-${t.end_iso}`));
+        
+        conversationState.suggestedTimes = [...conversationState.suggestedTimes, ...newTimes];
+        conversationState.currentSuggestionIndex = conversationState.suggestedTimes.length - newTimes.length;
+        
+        // Show the first new suggestion
+        const nextSuggestion = conversationState.suggestedTimes[conversationState.currentSuggestionIndex];
+        const startDate = new Date(nextSuggestion.start_iso);
+        const endDate = new Date(nextSuggestion.end_iso);
+        const timeStr = formatSuggestionTime(startDate, endDate);
+        
+        let suggestionMessage = `What about meeting at ${timeStr}?`;
+        if (suggestedLocation) {
+            suggestionMessage += ` at ${suggestedLocation}`;
+        }
+        
+        await typewriterMessage('agent', suggestionMessage);
+        showSuggestionButtons(nextSuggestion, suggestedLocation);
+        
+    } catch (error) {
+        console.error('Error fetching more suggestions:', error);
+        const errorMessage = error.message || 'Sorry, I encountered an error getting more suggestions.';
+        await typewriterMessage('agent', `Error: ${errorMessage}\n\nLet me try to find more available times...`);
         showCustomTimeInput();
     }
 }
@@ -534,10 +643,9 @@ async function submitCustomTime() {
         const suggestedTimes = data.suggested_times || [];
         const suggestedLocation = data.suggested_location;
         
-        // Store all suggested times and reset rejection count
+        // Store all suggested times and reset index (keep rejected times)
         conversationState.suggestedTimes = suggestedTimes;
         conversationState.currentSuggestionIndex = 0;
-        conversationState.rejectionCount = 0;
         
         conversationState.conversationHistory[conversationState.conversationHistory.length - 1].assistant = agentResponse;
         
@@ -632,10 +740,9 @@ async function submitFollowUp() {
         const suggestedTimes = data.suggested_times || [];
         const suggestedLocation = data.suggested_location;
         
-        // Store all suggested times and reset rejection count
+        // Store all suggested times and reset index (keep rejected times)
         conversationState.suggestedTimes = suggestedTimes;
         conversationState.currentSuggestionIndex = 0;
-        conversationState.rejectionCount = 0;
         
         conversationState.conversationHistory[conversationState.conversationHistory.length - 1].assistant = agentResponse;
         
@@ -668,7 +775,8 @@ function startOver() {
         meetingScheduled: false,
         suggestedTimes: [],
         currentSuggestionIndex: 0,
-        rejectionCount: 0
+        rejectedTimes: [],
+        fetchRetryCount: 0
     };
     
     const chatMessages = document.getElementById('chat-messages');
