@@ -93,6 +93,7 @@ def create_event():
         meeting_type = data.get('meeting_type')  # "online" or "in-person"
         location = data.get('location')  # For in-person meetings
         attendee_email = data.get('attendee_email')  # For online meetings
+        meeting_description = data.get('meeting_description')  # Purpose/reason for the meeting
         
         if not start_iso or not end_iso:
             return jsonify({'error': 'start_iso and end_iso are required'}), 400
@@ -107,7 +108,8 @@ def create_event():
                     end_iso=end_iso,
                     meeting_type=meeting_type,
                     location=location,
-                    attendee_email=attendee_email
+                    attendee_email=attendee_email,
+                    meeting_description=meeting_description
                 )
             )
         finally:

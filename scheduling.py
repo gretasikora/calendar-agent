@@ -728,7 +728,8 @@ async def create_calendar_event(
     end_iso: str,
     meeting_type: str = "in-person",
     location: Optional[str] = None,
-    attendee_email: Optional[str] = None
+    attendee_email: Optional[str] = None,
+    meeting_description: Optional[str] = None
 ) -> Dict:
     """
     Create a calendar event via MCP.
@@ -739,6 +740,7 @@ async def create_calendar_event(
         meeting_type: "online" or "in-person"
         location: Location for in-person meetings
         attendee_email: Email address for online meetings
+        meeting_description: Description/purpose of the meeting
     
     Returns:
         Dict with event_id, html_link, meet_link, and message
@@ -762,6 +764,10 @@ async def create_calendar_event(
         "end": end_iso,
         "timeZone": timezone,
     }
+    
+    # Add description if provided (includes the meeting purpose/reason)
+    if meeting_description:
+        event_params["description"] = meeting_description
     
     # Add location for in-person meetings
     if meeting_type == "in-person" and location:

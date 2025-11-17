@@ -366,7 +366,8 @@ async function createEvent(startIso, endIso, attendeeEmail) {
                 end_iso: endIso,
                 meeting_type: conversationState.isOnline ? 'online' : 'in-person',
                 location: conversationState.suggestedLocation || null,
-                attendee_email: attendeeEmail
+                attendee_email: attendeeEmail,
+                meeting_description: conversationState.purpose || null
             })
         });
         
@@ -394,15 +395,7 @@ async function createEvent(startIso, endIso, attendeeEmail) {
         chatMessages.classList.add('no-scroll');
         
         // Show success message
-        let successMessage = 'Great! I\'ve created the calendar event.';
-        
-        if (conversationState.isOnline && data.meet_link) {
-            successMessage += `\n\nGoogle Meet link: ${data.meet_link}`;
-        }
-        
-        if (data.html_link) {
-            successMessage += `\n\nView in calendar: ${data.html_link}`;
-        }
+        let successMessage = 'Great! I\'ve sent you an invite! See you soon!';
         
         await typewriterMessage('agent', successMessage, false);
         
