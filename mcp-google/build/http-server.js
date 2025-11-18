@@ -1090,8 +1090,11 @@ var CreateEventHandler = class extends BaseToolHandler {
         recurrence: args.recurrence
       };
       if (args.conferenceData) {
+        // Use explicitly provided conference data (for online meetings)
         requestBody.conferenceData = args.conferenceData;
-      } else if (args.attendees && args.attendees.length > 0) {
+      } else if (args.attendees && args.attendees.length > 0 && args.conferenceDataVersion !== 0) {
+        // Auto-add Google Meet only if conferenceDataVersion is not explicitly set to 0
+        // This allows in-person meetings to send invites without Google Meet
         const requestId = `meet-${Date.now()}-${Math.random().toString(36).substring(7)}`;
         requestBody.conferenceData = {
           createRequest: {
@@ -1102,13 +1105,15 @@ var CreateEventHandler = class extends BaseToolHandler {
           }
         };
       }
-      const needsConferenceData = args.conferenceData || args.attendees && args.attendees.length > 0;
+      // Only need conference data version if we actually have conference data
+      const hasConferenceData = requestBody.conferenceData !== undefined;
       const insertOptions = {
         calendarId: args.calendarId,
         requestBody
       };
-      if (needsConferenceData) {
-        insertOptions.conferenceDataVersion = 1;
+      if (hasConferenceData) {
+        // Use explicitly provided version, or default to 1
+        insertOptions.conferenceDataVersion = args.conferenceDataVersion !== undefined ? args.conferenceDataVersion : 1;
       }
       if (args.attendees && args.attendees.length > 0) {
         insertOptions.sendUpdates = args.sendUpdates || "all";

@@ -114,8 +114,26 @@ The MCP server needs to run as a separate service. Since you've modified the MCP
       - Remove: `GOOGLE_CALENDAR_MCP_TOKEN_PATH` (not needed anymore)
    
    **That's it!** The server will automatically load tokens from the environment variable.
-9. Note the internal service URL (e.g., `mcp-server-production.up.railway.app`)
-10. **Update `MCP_URL`** in your Flask service to: `http://mcp-server-production.up.railway.app/mcp/calendar`
+9. **Get your MCP service URL:**
+   - In Railway → Your MCP service → **Settings** tab
+   - Look for **"Public Domain"** or **"Service URL"**
+   - Copy the URL (e.g., `mcp-google-production.up.railway.app`)
+   
+10. **Update `MCP_URL` in your Flask service:**
+    - Go to Railway → Your Flask service → **Variables** tab
+    - **Option 1: Use Public Domain (RECOMMENDED):**
+      - In Railway → Your MCP service → **Settings** tab
+      - Click **"Generate Domain"** to create a public domain
+      - Copy the URL (e.g., `mcp-google-production.up.railway.app`)
+      - Set `MCP_URL` to: `http://<your-mcp-public-url>/mcp/calendar`
+      - Example: `http://mcp-google-production.up.railway.app/mcp/calendar`
+    - **Option 2: Use Internal Service Reference (if no public domain):**
+      - In Railway → Your MCP service → **Settings** tab → **Private Networking**
+      - Find the internal endpoint name (e.g., `calendar-agent`)
+      - Set `MCP_URL` to: `http://<internal-endpoint-name>:3000/mcp/calendar`
+      - Example: `http://calendar-agent:3000/mcp/calendar`
+      - **Note:** Use the endpoint name WITHOUT `.railway.internal` suffix, and include port `:3000`
+    - **Note:** Use `http://` (not `https://`) unless you've configured HTTPS
 
 **Note:** The modified MCP server with HTTP wrapper is now included in your repository, so Railway will deploy it with your modifications.
 

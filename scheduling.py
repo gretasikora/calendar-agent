@@ -453,6 +453,8 @@ Best available time based on preferences: {suggested_times_text}{location_text}
 
 Provide a direct response that presents this ONE time suggestion and asks if it works. Be concise - no fluff. Example: "How about {suggested_times_text}{location_text}? Does that work for you?"
 
+IMPORTANT: The location should come BEFORE the question mark. Format: "How about [time] at [location]? Does that work for you?" or "How about [time]? Does that work for you?" (if no location).
+
 CRITICAL RULES - FOLLOW THESE EXACTLY:
 - Only mention this ONE time. Do not list multiple times.
 - Be direct and concise. No pleasantries or fluff.
@@ -773,11 +775,29 @@ async def create_calendar_event(
     if meeting_type == "in-person" and location:
         event_params["location"] = location
     
-    # Add attendees for online meetings (triggers Google Meet)
-    if meeting_type == "online" and attendee_email:
+    # Add attendees for ALL meeting types (send invites to user)
+    if attendee_email:
         event_params["attendees"] = [{"email": attendee_email}]
         event_params["sendUpdates"] = "all"  # Send invites to all attendees
-        # Google Meet will be auto-added by the MCP handler
+        
+        # Add Google Meet conference data ONLY for online meetings
+        if meeting_type == "online":
+            # Generate a unique request ID for Google Meet
+            import time
+            import random
+            request_id = f"meet-{int(time.time() * 1000)}-{random.randint(1000, 9999)}"
+            event_params["conferenceData"] = {
+                "createRequest": {
+                    "requestId": request_id,
+                    "conferenceSolutionKey": {
+                        "type": "hangoutsMeet"
+                    }
+                }
+            }
+            event_params["conferenceDataVersion"] = 1
+        else:
+            # For in-person meetings, explicitly prevent auto-adding Google Meet
+            event_params["conferenceDataVersion"] = 0
     
     # Create event via MCP
     payload = {

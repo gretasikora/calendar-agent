@@ -6,7 +6,6 @@ let authToken = null;
 let conversationState = {
     step: 'greeting', // greeting -> duration -> purpose -> online -> processing -> done
     duration: null,
-    customDuration: null,
     purpose: '',
     isOnline: null,
     conversationHistory: [],
@@ -79,7 +78,6 @@ async function handle401Error() {
     conversationState = {
         step: 'greeting',
         duration: null,
-        customDuration: null,
         purpose: '',
         isOnline: null,
         conversationHistory: [],
@@ -164,11 +162,6 @@ function showDurationSelection() {
             <div class="duration-buttons">
                 <button class="btn" onclick="selectDuration(30)">30 Minutes</button>
                 <button class="btn" onclick="selectDuration(60)">1 Hour</button>
-                <button class="btn" onclick="selectDuration('custom')">Custom</button>
-            </div>
-            <div id="custom-duration" class="custom-duration-input hidden">
-                <input type="number" id="custom-duration-input" placeholder="Minutes" min="15" step="15">
-                <span style="color: #ffffff;">minutes</span>
             </div>
         </div>
     `;
@@ -184,46 +177,15 @@ function selectDuration(duration) {
     // Add selected class to clicked button
     event.target.classList.add('selected');
     
-    if (duration === 'custom') {
-        document.getElementById('custom-duration').classList.remove('hidden');
-        document.getElementById('custom-duration-input').focus();
-    } else {
-        document.getElementById('custom-duration').classList.add('hidden');
-        conversationState.duration = duration;
-        conversationState.step = 'purpose';
-        setTimeout(() => {
-            addUserMessage(`${duration} minutes`);
-            showPurposeInput();
-        }, 500);
-    }
+    conversationState.duration = duration;
+    conversationState.step = 'purpose';
+    setTimeout(() => {
+        addUserMessage(`${duration} minutes`);
+        showPurposeInput();
+    }, 500);
 }
 
-// Handle custom duration input
-document.addEventListener('input', (e) => {
-    if (e.target.id === 'custom-duration-input') {
-        const minutes = parseInt(e.target.value);
-        if (minutes >= 15) {
-            conversationState.duration = minutes;
-            conversationState.customDuration = minutes;
-        }
-    }
-});
-
-// Handle custom duration enter key
-document.addEventListener('keypress', (e) => {
-    if (e.target.id === 'custom-duration-input' && e.key === 'Enter') {
-        const minutes = parseInt(e.target.value);
-        if (minutes >= 15) {
-            conversationState.duration = minutes;
-            conversationState.customDuration = minutes;
-            addUserMessage(`${minutes} minutes`);
-            conversationState.step = 'purpose';
-            setTimeout(() => {
-                showPurposeInput();
-            }, 500);
-        }
-    }
-});
+// Custom duration input removed - users can only select 30 minutes or 1 hour
 
 // Show purpose input
 function showPurposeInput() {
@@ -304,11 +266,9 @@ async function processBooking() {
     await typewriterMessage('agent', 'Perfect! Let me check her availability...');
     
     // Build the query for the agent
-    const durationText = conversationState.customDuration 
-        ? `${conversationState.customDuration} minutes`
-        : conversationState.duration === 30 
-            ? '30 minutes' 
-            : '1 hour';
+    const durationText = conversationState.duration === 30 
+        ? '30 minutes' 
+        : '1 hour';
     
     const query = `I need to book a ${durationText} meeting${conversationState.isOnline ? ' online' : ' in person'} for: ${conversationState.purpose}. When am I available?`;
     
@@ -367,11 +327,11 @@ async function processBooking() {
             const startDate = new Date(suggestedTime.start_iso);
             const endDate = new Date(suggestedTime.end_iso);
             const timeStr = formatSuggestionTime(startDate, endDate);
-            let agentResponse = `How about ${timeStr}?`;
+            let agentResponse = `How about ${timeStr}`;
             if (suggestedLocation) {
                 agentResponse += ` at ${suggestedLocation}`;
             }
-            agentResponse += ` Does that work for you?`;
+            agentResponse += `? Does that work for you?`;
             
             // Update conversation history
             conversationState.conversationHistory[conversationState.conversationHistory.length - 1].assistant = agentResponse;
@@ -433,58 +393,53 @@ function formatTimeRange(startDate, endDate) {
 async function acceptSuggestion(startIso, endIso) {
     const inputSection = document.getElementById('input-section');
     
-    // Check if this is an online meeting - if so, collect email first
-    if (conversationState.isOnline) {
-        // Show email input form
-        inputSection.innerHTML = `
-            <div style="margin-bottom: 15px;">
-                <label style="display: block; margin-bottom: 8px; color: #ffffff;">Please enter your email address to receive the Google Meet invite:</label>
-                <input type="email" id="attendee-email" class="text-input" placeholder="your.email@example.com" style="min-height: 40px; margin-bottom: 15px;" />
-            </div>
-            <button class="btn" onclick="submitEventCreation('${startIso}', '${endIso}')">Create Meeting</button>
-        `;
-        inputSection.style.display = 'block';
-        
-        // Focus on email input
-        setTimeout(() => {
-            const emailInput = document.getElementById('attendee-email');
-            if (emailInput) {
-                emailInput.focus();
-                // Allow Enter key to submit
-                emailInput.addEventListener('keypress', function(e) {
-                    if (e.key === 'Enter') {
-                        submitEventCreation(startIso, endIso);
-                    }
-                });
-            }
-        }, 100);
-        
-        return;
-    }
+    // Always ask for email address for all meeting types
+    const meetingTypeText = conversationState.isOnline 
+        ? 'online meeting (Google Meet invite)' 
+        : 'in-person meeting (calendar invite)';
     
-    // For in-person meetings, create event directly
-    await createEvent(startIso, endIso, null);
+    // Show email input form
+    inputSection.innerHTML = `
+        <div style="margin-bottom: 15px;">
+            <label style="display: block; margin-bottom: 8px; color: #ffffff;">Please enter your email address to receive the ${meetingTypeText}:</label>
+            <input type="email" id="attendee-email" class="text-input" placeholder="your.email@example.com" style="min-height: 40px; margin-bottom: 15px;" />
+        </div>
+        <button class="btn" onclick="submitEventCreation('${startIso}', '${endIso}')">Create Meeting</button>
+    `;
+    inputSection.style.display = 'block';
+    
+    // Focus on email input
+    setTimeout(() => {
+        const emailInput = document.getElementById('attendee-email');
+        if (emailInput) {
+            emailInput.focus();
+            // Allow Enter key to submit
+            emailInput.addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    submitEventCreation(startIso, endIso);
+                }
+            });
+        }
+    }, 100);
 }
 
-// Submit event creation (called from email form or directly for in-person)
+// Submit event creation (called from email form)
 async function submitEventCreation(startIso, endIso) {
     const inputSection = document.getElementById('input-section');
-    let attendeeEmail = null;
     
-    if (conversationState.isOnline) {
-        const emailInput = document.getElementById('attendee-email');
-        attendeeEmail = emailInput ? emailInput.value.trim() : null;
-        
-        if (!attendeeEmail || !attendeeEmail.includes('@')) {
-            await typewriterMessage('agent', 'Please enter a valid email address.', false);
-            return;
-        }
+    // Always require email for all meeting types
+    const emailInput = document.getElementById('attendee-email');
+    const attendeeEmail = emailInput ? emailInput.value.trim() : null;
+    
+    if (!attendeeEmail || !attendeeEmail.includes('@')) {
+        await typewriterMessage('agent', 'Please enter a valid email address.', false);
+        return;
     }
     
     // Clear the input section
     inputSection.innerHTML = '';
     
-    // Create the event
+    // Create the event with email
     await createEvent(startIso, endIso, attendeeEmail);
 }
 
@@ -584,10 +539,11 @@ async function rejectSuggestion() {
         const timeStr = formatSuggestionTime(startDate, endDate);
         
         // Create a message with the new suggestion
-        let suggestionMessage = `No problem! What about meeting at ${timeStr}?`;
+        let suggestionMessage = `No problem! What about meeting at ${timeStr}`;
         if (suggestedLocation) {
             suggestionMessage += ` at ${suggestedLocation}`;
         }
+        suggestionMessage += `? Does that work for you?`;
         
         await typewriterMessage('agent', suggestionMessage);
         
@@ -612,7 +568,7 @@ async function fetchMoreSuggestions() {
             headers: getApiHeaders(),
             body: JSON.stringify({
                 // Use a neutral query that doesn't imply rejections
-                query: `Find available times for a ${conversationState.customDuration ? conversationState.customDuration + ' minute' : conversationState.duration === 30 ? '30 minute' : '1 hour'} ${conversationState.isOnline ? 'online' : 'in-person'} meeting about: ${conversationState.purpose}`,
+                        query: `Find available times for a ${conversationState.duration === 30 ? '30 minute' : '1 hour'} ${conversationState.isOnline ? 'online' : 'in-person'} meeting about: ${conversationState.purpose}`,
                 conversation_history: [], // Don't pass conversation history to avoid LLM seeing rejections
                 meeting_type: conversationState.isOnline ? 'online' : 'in-person',
                 meeting_description: conversationState.purpose,
@@ -658,9 +614,8 @@ async function fetchMoreSuggestions() {
             
             // Limit retries to prevent infinite loops (max 3 retries)
             if (conversationState.fetchRetryCount > 3) {
-                // After 3 retries, show custom input as last resort
-                await updateLoadingMessage('I\'m having trouble finding available times. Please suggest a time that works for you.');
-                showCustomTimeInput();
+                // After 3 retries, inform user we couldn't find more times
+                await updateLoadingMessage('I\'m having trouble finding more available times. Please try again later or contact me directly.');
                 conversationState.fetchRetryCount = 0; // Reset for next time
                 return;
             }
@@ -692,10 +647,11 @@ async function fetchMoreSuggestions() {
         const endDate = new Date(nextSuggestion.end_iso);
         const timeStr = formatSuggestionTime(startDate, endDate);
         
-        let suggestionMessage = `What about meeting at ${timeStr}?`;
+        let suggestionMessage = `What about meeting at ${timeStr}`;
         if (suggestedLocation) {
             suggestionMessage += ` at ${suggestedLocation}`;
         }
+        suggestionMessage += `? Does that work for you?`;
         
         // Replace the loading message with the actual response
         await updateLoadingMessage(suggestionMessage);
@@ -711,7 +667,7 @@ async function fetchMoreSuggestions() {
         } else {
             await typewriterMessage('agent', fullErrorMessage);
         }
-        showCustomTimeInput();
+        // Don't show custom time input - just let user know there was an error
     }
 }
 
@@ -723,128 +679,17 @@ function formatSuggestionTime(startDate, endDate) {
     return `${startStr} - ${endStr}`;
 }
 
-// Show custom time input
-function showCustomTimeInput() {
-    const inputSection = document.getElementById('input-section');
-    inputSection.innerHTML = `
-        <div class="input-group">
-            <label>Suggest a time that works for you</label>
-            <textarea 
-                id="custom-time-input" 
-                class="text-input" 
-                placeholder="e.g., Tomorrow at 2pm, or Friday at 10am"
-                rows="2"
-            ></textarea>
-        </div>
-        <div style="display: flex; gap: 10px;">
-            <button class="btn" onclick="submitCustomTime()" style="flex: 1;">Send</button>
-            <button class="btn" onclick="startOver()" style="flex: 1;">Start Over</button>
-        </div>
-    `;
-    
-    document.getElementById('custom-time-input').focus();
-    
-    // Scroll to fit input section
-    setTimeout(() => scrollToFitInput(), 100);
-}
+// Custom time input functions removed - users can only accept/reject suggested times
 
-// Submit custom time suggestion
-async function submitCustomTime() {
-    const customTimeInput = document.getElementById('custom-time-input');
-    const query = customTimeInput.value.trim();
-    
-    if (!query) {
-        return;
-    }
-    
-    addUserMessage(query);
-    customTimeInput.value = '';
-    
-    // Add to conversation history
-    conversationState.conversationHistory.push({
-        user: query,
-        assistant: ''
-    });
-    
-    try {
-        const response = await fetch(`${getApiBaseUrl()}/api/check-availability`, {
-            method: 'POST',
-            headers: getApiHeaders(),
-            body: JSON.stringify({
-                query: query,
-                conversation_history: conversationState.conversationHistory.slice(0, -1),
-                meeting_type: conversationState.isOnline ? 'online' : 'in-person',
-                meeting_description: conversationState.purpose,
-                duration_minutes: conversationState.duration
-            })
-        });
-        
-        if (!response.ok) {
-            // Handle 401 Unauthorized - token expired or invalid
-            if (response.status === 401) {
-                await handle401Error();
-                return;
-            }
-            
-            let errorMessage = 'Failed to check availability';
-            try {
-                const errorData = await response.json();
-                errorMessage = errorData.error || errorMessage;
-            } catch (e) {
-                console.error('API Error (no JSON):', response.status, response.statusText);
-            }
-            throw new Error(errorMessage);
-        }
-        
-        const data = await response.json();
-        const agentResponse = data.response || 'I was unable to process your request.';
-        const suggestedTime = data.suggested_time;
-        const suggestedTimes = data.suggested_times || [];
-        const suggestedLocation = data.suggested_location;
-        
-        // Store all suggested times and reset index (keep rejected times)
-        conversationState.suggestedTimes = suggestedTimes;
-        conversationState.currentSuggestionIndex = 0;
-        
-        conversationState.conversationHistory[conversationState.conversationHistory.length - 1].assistant = agentResponse;
-        
-        await typewriterMessage('agent', agentResponse);
-        
-        // Show Accept/Reject buttons if a time was suggested
-        if (suggestedTime) {
-            showSuggestionButtons(suggestedTime, suggestedLocation);
-        } else {
-            // Show follow-up options if no suggestion
-            showFollowUp();
-        }
-        
-    } catch (error) {
-        console.error('Error:', error);
-        const errorMessage = error.message || 'Sorry, I encountered an error. Please try again.';
-        await typewriterMessage('agent', `Error: ${errorMessage}\n\nPlease check the browser console for details.`);
-    }
-}
-
-// Show follow-up options
+// Show follow-up options (removed - users can only accept/reject suggested times)
 function showFollowUp() {
+    // No longer showing custom input - users must accept or reject suggested times
     const inputSection = document.getElementById('input-section');
     inputSection.innerHTML = `
-        <div class="input-group">
-            <label>Ask a follow-up question or start over</label>
-            <textarea 
-                id="followup-input" 
-                class="text-input" 
-                placeholder="e.g., What about tomorrow at 2pm?"
-                rows="2"
-            ></textarea>
-        </div>
         <div style="display: flex; gap: 10px;">
-            <button class="btn" onclick="submitFollowUp()" style="flex: 1;">Send</button>
             <button class="btn" onclick="startOver()" style="flex: 1;">Start Over</button>
         </div>
     `;
-    
-    document.getElementById('followup-input').focus();
     
     // Scroll to fit input section
     setTimeout(() => scrollToFitInput(), 100);
@@ -931,7 +776,6 @@ function startOver() {
     conversationState = {
         step: 'greeting',
         duration: null,
-        customDuration: null,
         purpose: '',
         isOnline: null,
         conversationHistory: [],
