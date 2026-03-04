@@ -646,7 +646,7 @@ async function fetchMoreSuggestions() {
                 meeting_type: conversationState.isOnline ? 'online' : 'in-person',
                 meeting_description: conversationState.purpose,
                 duration_minutes: conversationState.duration,
-                rejected_times: conversationState.rejectedTimes, // Pass rejected times to exclude them
+                rejected_times: conversationState.suggestedTimes.map(t => ({ start_iso: t.start_iso, end_iso: t.end_iso })), // Exclude ALL previously seen times
                 skip_llm_formatting: true // Skip LLM to avoid "I understand" messages
             })
         });
