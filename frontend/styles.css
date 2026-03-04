@@ -37,7 +37,7 @@ body {
     overflow-y: auto;
     overflow-x: hidden;
     padding: 20px;
-    padding-bottom: 0;
+    padding-bottom: 60px;
     display: flex;
     flex-direction: column;
     gap: 20px;
@@ -236,10 +236,15 @@ body {
 }
 
 /* Three time-slot suggestion buttons — rendered inline in the chat */
+#time-slots-widget {
+    width: 100%;
+}
+
 .time-slots-container {
     display: flex;
     flex-direction: column;
     gap: 10px;
+    width: 100%;
 }
 
 .time-slot-btn {
