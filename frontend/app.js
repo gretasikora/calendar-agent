@@ -321,24 +321,16 @@ async function processBooking() {
         conversationState.suggestedTimes = suggestedTimes;
         conversationState.currentSuggestionIndex = 0;
         
-        // Generate our own message from the first suggestion (don't use LLM response)
-        // This prevents the LLM from generating "I understand" messages
-        if (suggestedTime) {
-            const startDate = new Date(suggestedTime.start_iso);
-            const endDate = new Date(suggestedTime.end_iso);
-            const timeStr = formatSuggestionTime(startDate, endDate);
-            let agentResponse = `How about ${timeStr}`;
-            if (suggestedLocation) {
-                agentResponse += ` at ${suggestedLocation}`;
-            }
-            agentResponse += `? Does that work for you?`;
+        // Show 3 slots at once as clickable buttons
+        if (suggestedTimes.length > 0) {
+            const agentResponse = `Here are some times when Greta is :`;
             
             // Update conversation history
             conversationState.conversationHistory[conversationState.conversationHistory.length - 1].assistant = agentResponse;
             
             // Replace the loading message with the actual response
             await updateLoadingMessage(agentResponse);
-            showSuggestionButtons(suggestedTime, suggestedLocation);
+            showThreeSuggestions(suggestedLocation);
         } else {
             // No suggestions - use LLM response as fallback
             const agentResponse = data.response || 'I was unable to check her availability. Please try again.';
@@ -362,23 +354,46 @@ async function processBooking() {
     }
 }
 
-// Show Accept/Reject buttons for suggested time
-function showSuggestionButtons(suggestedTime, suggestedLocation) {
+// Show 3 time slots as clickable buttons
+function showThreeSuggestions(suggestedLocation) {
     const inputSection = document.getElementById('input-section');
-    
+    const startIdx = conversationState.currentSuggestionIndex;
+    const batch = conversationState.suggestedTimes.slice(startIdx, startIdx + 3);
+
+    if (batch.length === 0) {
+        fetchMoreSuggestions();
+        return;
+    }
+
+    // Store location so acceptSuggestion can use it
+    conversationState.suggestedLocation = suggestedLocation;
+
+    const buttonsHtml = batch.map((slot, i) => {
+        const startDate = new Date(slot.start_iso);
+        const endDate = new Date(slot.end_iso);
+        const timeStr = formatSuggestionTime(startDate, endDate);
+        const locationStr = suggestedLocation ? ` — ${suggestedLocation}` : '';
+        return `<button class="btn time-slot-btn" onclick="selectTimeSlot(${startIdx + i})">${timeStr}${locationStr}</button>`;
+    }).join('');
+
     inputSection.innerHTML = `
-        <div class="suggestion-buttons">
-            <button class="btn" onclick="acceptSuggestion('${suggestedTime.start_iso}', '${suggestedTime.end_iso}')">Accept</button>
-            <button class="btn" onclick="rejectSuggestion()">Reject</button>
+        <div class="time-slots-container">
+            ${buttonsHtml}
+            <button class="btn none-work-btn" onclick="rejectCurrentBatch()">None of these work</button>
         </div>
     `;
-    
-    // Store suggested time in conversation state
-    conversationState.suggestedTime = suggestedTime;
-    conversationState.suggestedLocation = suggestedLocation;
-    
-    // Scroll to fit input section
+
     setTimeout(() => scrollToFitInput(), 100);
+}
+
+// User clicked a specific time slot — treat as acceptance
+function selectTimeSlot(index) {
+    const slot = conversationState.suggestedTimes[index];
+    if (!slot) return;
+    const startDate = new Date(slot.start_iso);
+    const endDate = new Date(slot.end_iso);
+    addUserMessage(formatSuggestionTime(startDate, endDate));
+    acceptSuggestion(slot.start_iso, slot.end_iso);
 }
 
 // Format time range for display
@@ -511,46 +526,30 @@ async function createEvent(startIso, endIso, attendeeEmail) {
     }
 }
 
-// Reject suggestion
-async function rejectSuggestion() {
-    // Add current suggestion to rejected list
-    const currentSuggestion = conversationState.suggestedTimes[conversationState.currentSuggestionIndex];
-    if (currentSuggestion) {
+// Reject the current batch of 3 slots and show the next batch (or fetch more)
+async function rejectCurrentBatch() {
+    const startIdx = conversationState.currentSuggestionIndex;
+    const batch = conversationState.suggestedTimes.slice(startIdx, startIdx + 3);
+
+    // Mark all slots in the current batch as rejected
+    batch.forEach(slot => {
         conversationState.rejectedTimes.push({
-            start_iso: currentSuggestion.start_iso,
-            end_iso: currentSuggestion.end_iso
+            start_iso: slot.start_iso,
+            end_iso: slot.end_iso
         });
-    }
-    
-    // Get the next suggestion from the list
-    conversationState.currentSuggestionIndex++;
-    
+    });
+
+    conversationState.currentSuggestionIndex += 3;
+
     const inputSection = document.getElementById('input-section');
     inputSection.innerHTML = '';
-    
-    // Check if we have more suggestions in the current list
-    if (conversationState.currentSuggestionIndex < conversationState.suggestedTimes.length) {
-        const nextSuggestion = conversationState.suggestedTimes[conversationState.currentSuggestionIndex];
-        const suggestedLocation = conversationState.suggestedLocation;
-        
-        // Format the next suggestion time for display
-        const startDate = new Date(nextSuggestion.start_iso);
-        const endDate = new Date(nextSuggestion.end_iso);
-        const timeStr = formatSuggestionTime(startDate, endDate);
-        
-        // Create a message with the new suggestion
-        let suggestionMessage = `No problem! What about meeting at ${timeStr}`;
-        if (suggestedLocation) {
-            suggestionMessage += ` at ${suggestedLocation}`;
-        }
-        suggestionMessage += `? Does that work for you?`;
-        
-        await typewriterMessage('agent', suggestionMessage);
-        
-        // Show the next suggestion buttons
-        showSuggestionButtons(nextSuggestion, suggestedLocation);
+
+    const remaining = conversationState.suggestedTimes.length - conversationState.currentSuggestionIndex;
+
+    if (remaining >= 1) {
+        await typewriterMessage('agent', 'No problem! Here are some other times:');
+        showThreeSuggestions(conversationState.suggestedLocation);
     } else {
-        // No more suggestions in current list, fetch more from backend
         await fetchMoreSuggestions();
     }
 }
@@ -641,21 +640,9 @@ async function fetchMoreSuggestions() {
         conversationState.suggestedTimes = [...conversationState.suggestedTimes, ...newTimes];
         conversationState.currentSuggestionIndex = conversationState.suggestedTimes.length - newTimes.length;
         
-        // Show the first new suggestion
-        const nextSuggestion = conversationState.suggestedTimes[conversationState.currentSuggestionIndex];
-        const startDate = new Date(nextSuggestion.start_iso);
-        const endDate = new Date(nextSuggestion.end_iso);
-        const timeStr = formatSuggestionTime(startDate, endDate);
-        
-        let suggestionMessage = `What about meeting at ${timeStr}`;
-        if (suggestedLocation) {
-            suggestionMessage += ` at ${suggestedLocation}`;
-        }
-        suggestionMessage += `? Does that work for you?`;
-        
-        // Replace the loading message with the actual response
-        await updateLoadingMessage(suggestionMessage);
-        showSuggestionButtons(nextSuggestion, suggestedLocation);
+        // Show the next batch of 3 suggestions
+        await updateLoadingMessage('Here are some more times that could work for you:');
+        showThreeSuggestions(suggestedLocation);
         
     } catch (error) {
         console.error('Error fetching more suggestions:', error);
