@@ -731,6 +731,7 @@ async def create_calendar_event(
     meeting_type: str = "in-person",
     location: Optional[str] = None,
     attendee_email: Optional[str] = None,
+    attendee_name: Optional[str] = None,
     meeting_description: Optional[str] = None
 ) -> Dict:
     """
@@ -761,7 +762,7 @@ async def create_calendar_event(
     # Build event parameters
     event_params = {
         "calendarId": calendar_email,
-        "summary": "Meeting with Greta",
+        "summary": f"Greta <> {attendee_name}" if attendee_name else "Meeting with Greta",
         "start": start_iso,
         "end": end_iso,
         "timeZone": timezone,

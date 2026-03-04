@@ -485,53 +485,58 @@ async function acceptSuggestion(startIso, endIso) {
         ? 'online meeting (Google Meet invite)' 
         : 'in-person meeting (calendar invite)';
     
-    // Show email input form
+    // Show name + email input form
     inputSection.innerHTML = `
         <div style="margin-bottom: 15px;">
-            <label style="display: block; margin-bottom: 8px; color: #ffffff;">Please enter your email address to receive the ${meetingTypeText}:</label>
+            <label style="display: block; margin-bottom: 8px; color: #ffffff;">Your name:</label>
+            <input type="text" id="attendee-name" class="text-input" placeholder="Your name" style="min-height: 40px; margin-bottom: 20px;" />
+            <label style="display: block; margin-bottom: 8px; color: #ffffff;">Your email (for the ${meetingTypeText}):</label>
             <input type="email" id="attendee-email" class="text-input" placeholder="your.email@example.com" style="min-height: 40px; margin-bottom: 15px;" />
         </div>
         <button class="btn" onclick="submitEventCreation('${startIso}', '${endIso}')">Create Meeting</button>
     `;
     inputSection.style.display = 'block';
     
-    // Focus on email input
+    // Focus on name input; Enter on email submits
     setTimeout(() => {
+        const nameInput = document.getElementById('attendee-name');
         const emailInput = document.getElementById('attendee-email');
+        if (nameInput) nameInput.focus();
         if (emailInput) {
-            emailInput.focus();
-            // Allow Enter key to submit
             emailInput.addEventListener('keypress', function(e) {
-                if (e.key === 'Enter') {
-                    submitEventCreation(startIso, endIso);
-                }
+                if (e.key === 'Enter') submitEventCreation(startIso, endIso);
             });
         }
     }, 100);
 }
 
-// Submit event creation (called from email form)
+// Submit event creation (called from name + email form)
 async function submitEventCreation(startIso, endIso) {
     const inputSection = document.getElementById('input-section');
-    
-    // Always require email for all meeting types
+
+    const nameInput = document.getElementById('attendee-name');
     const emailInput = document.getElementById('attendee-email');
+    const attendeeName = nameInput ? nameInput.value.trim() : '';
     const attendeeEmail = emailInput ? emailInput.value.trim() : null;
-    
+
+    if (!attendeeName) {
+        await typewriterMessage('agent', 'Please enter your name.', false);
+        return;
+    }
+
     if (!attendeeEmail || !attendeeEmail.includes('@')) {
         await typewriterMessage('agent', 'Please enter a valid email address.', false);
         return;
     }
-    
+
     // Clear the input section
     inputSection.innerHTML = '';
-    
-    // Create the event with email
-    await createEvent(startIso, endIso, attendeeEmail);
+
+    await createEvent(startIso, endIso, attendeeEmail, attendeeName);
 }
 
 // Create calendar event via API
-async function createEvent(startIso, endIso, attendeeEmail) {
+async function createEvent(startIso, endIso, attendeeEmail, attendeeName) {
     const inputSection = document.getElementById('input-section');
     inputSection.innerHTML = '';
     
@@ -548,6 +553,7 @@ async function createEvent(startIso, endIso, attendeeEmail) {
                 meeting_type: conversationState.isOnline ? 'online' : 'in-person',
                 location: conversationState.suggestedLocation || null,
                 attendee_email: attendeeEmail,
+                attendee_name: attendeeName || null,
                 meeting_description: conversationState.purpose || null
             })
         });
