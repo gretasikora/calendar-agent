@@ -323,7 +323,7 @@ async function processBooking() {
         
         // Show 3 slots at once as clickable buttons
         if (suggestedTimes.length > 0) {
-            const agentResponse = `Here are some times when Greta is :`;
+            const agentResponse = `Here are some times when Greta is available:`;
             
             // Update conversation history
             conversationState.conversationHistory[conversationState.conversationHistory.length - 1].assistant = agentResponse;
