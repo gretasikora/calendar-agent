@@ -335,7 +335,7 @@ async def suggest_online_times(
                         "reason": f"Saturday 10:30 AM ({saturday_date.strftime('%B %d')})"
                     })
     
-    return suggestions[:5]  # Return top 5 suggestions
+    return suggestions[:6]  # Return top 6 suggestions (2 batches of 3)
 
 # ---------------------------
 # Preference Logic: In-Person Meetings
@@ -521,12 +521,12 @@ async def suggest_inperson_times(
                                         "end_iso": end_iso,
                                         "reason": f"{hour}:00 PM on {check_date.strftime('%A, %B %d')}"
                                     })
-                                    if len(suggestions) >= 3:
+                                    if len(suggestions) >= 6:
                                         break
-                    if len(suggestions) >= 3:
+                    if len(suggestions) >= 6:
                         break
     
-    return suggestions[:5], location
+    return suggestions[:6], location  # Return top 6 suggestions (2 batches of 3)
 
 # ---------------------------
 # Helper Functions
