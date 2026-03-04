@@ -335,7 +335,7 @@ async def suggest_online_times(
                         "reason": f"Saturday 10:30 AM ({saturday_date.strftime('%B %d')})"
                     })
     
-    return suggestions[:6]  # Return top 6 suggestions (2 batches of 3)
+    return suggestions[:6]  # Return top 6 suggestions 
 
 # ---------------------------
 # Preference Logic: In-Person Meetings
