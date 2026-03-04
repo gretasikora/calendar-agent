@@ -354,9 +354,18 @@ async function processBooking() {
     }
 }
 
-// Show 3 time slots as clickable buttons
+// Show 3 time slots as clickable buttons, inline in the chat
 function showThreeSuggestions(suggestedLocation) {
+    const chatMessages = document.getElementById('chat-messages');
     const inputSection = document.getElementById('input-section');
+
+    // Clear the sticky input section — buttons live in the chat now
+    inputSection.innerHTML = '';
+
+    // Remove any previous slots widget still in the chat
+    const existing = document.getElementById('time-slots-widget');
+    if (existing) existing.remove();
+
     const startIdx = conversationState.currentSuggestionIndex;
     const batch = conversationState.suggestedTimes.slice(startIdx, startIdx + 3);
 
@@ -365,7 +374,6 @@ function showThreeSuggestions(suggestedLocation) {
         return;
     }
 
-    // Store location so acceptSuggestion can use it
     conversationState.suggestedLocation = suggestedLocation;
 
     const buttonsHtml = batch.map((slot, i) => {
@@ -376,13 +384,17 @@ function showThreeSuggestions(suggestedLocation) {
         return `<button class="btn time-slot-btn" onclick="selectTimeSlot(${startIdx + i})">${timeStr}${locationStr}</button>`;
     }).join('');
 
-    inputSection.innerHTML = `
+    const widgetDiv = document.createElement('div');
+    widgetDiv.id = 'time-slots-widget';
+    widgetDiv.className = 'message agent';
+    widgetDiv.innerHTML = `
         <div class="time-slots-container">
             ${buttonsHtml}
             <button class="btn none-work-btn" onclick="rejectCurrentBatch()">None of these work</button>
         </div>
     `;
 
+    chatMessages.appendChild(widgetDiv);
     setTimeout(() => scrollToFitInput(), 100);
 }
 
@@ -390,6 +402,11 @@ function showThreeSuggestions(suggestedLocation) {
 function selectTimeSlot(index) {
     const slot = conversationState.suggestedTimes[index];
     if (!slot) return;
+
+    // Remove the slots widget from the chat
+    const widget = document.getElementById('time-slots-widget');
+    if (widget) widget.remove();
+
     const startDate = new Date(slot.start_iso);
     const endDate = new Date(slot.end_iso);
     addUserMessage(formatSuggestionTime(startDate, endDate));
@@ -528,6 +545,10 @@ async function createEvent(startIso, endIso, attendeeEmail) {
 
 // Reject the current batch of 3 slots and show the next batch (or fetch more)
 async function rejectCurrentBatch() {
+    // Remove the slots widget from the chat
+    const widget = document.getElementById('time-slots-widget');
+    if (widget) widget.remove();
+
     const startIdx = conversationState.currentSuggestionIndex;
     const batch = conversationState.suggestedTimes.slice(startIdx, startIdx + 3);
 
@@ -540,9 +561,6 @@ async function rejectCurrentBatch() {
     });
 
     conversationState.currentSuggestionIndex += 3;
-
-    const inputSection = document.getElementById('input-section');
-    inputSection.innerHTML = '';
 
     const remaining = conversationState.suggestedTimes.length - conversationState.currentSuggestionIndex;
 
@@ -608,30 +626,10 @@ async function fetchMoreSuggestions() {
         });
         
         if (filteredTimes.length === 0) {
-            // No more unique suggestions from this batch - keep trying
-            conversationState.fetchRetryCount = (conversationState.fetchRetryCount || 0) + 1;
-            
-            // Limit retries to prevent infinite loops (max 3 retries)
-            if (conversationState.fetchRetryCount > 3) {
-                // After 3 retries, inform user we couldn't find more times
-                await updateLoadingMessage('I\'m having trouble finding more available times. Please try again later or contact me directly.');
-                conversationState.fetchRetryCount = 0; // Reset for next time
-                return;
-            }
-            
-            // Retry the request to get more suggestions - update the loading message
-            // Clear current loading message reference so we can create a new one
-            currentLoadingMessage = null;
-            await typewriterMessage('agent', 'Let me check for more available times...');
-            // Retry the same request - the backend should generate more suggestions
-            setTimeout(() => {
-                fetchMoreSuggestions(); // Retry recursively
-            }, 500);
+            await updateLoadingMessage("Sorry, I've run out of available times to suggest. Please contact Greta directly to arrange a meeting.");
+            showFollowUp();
             return;
         }
-        
-        // Reset retry count on success
-        conversationState.fetchRetryCount = 0;
         
         // Update suggested times (append new ones, avoiding duplicates)
         const existingTimeKeys = new Set(conversationState.suggestedTimes.map(t => `${t.start_iso}-${t.end_iso}`));
@@ -646,15 +644,13 @@ async function fetchMoreSuggestions() {
         
     } catch (error) {
         console.error('Error fetching more suggestions:', error);
-        const errorMessage = error.message || 'Sorry, I encountered an error getting more suggestions.';
-        const fullErrorMessage = `Error: ${errorMessage}\n\nLet me try to find more available times...`;
-        // Update the loading message with error, or create new message if no loading message exists
+        const msg = "Sorry, I ran into an error finding more times. Please contact Greta directly to arrange a meeting.";
         if (currentLoadingMessage) {
-            await updateLoadingMessage(fullErrorMessage);
+            await updateLoadingMessage(msg);
         } else {
-            await typewriterMessage('agent', fullErrorMessage);
+            await typewriterMessage('agent', msg);
         }
-        // Don't show custom time input - just let user know there was an error
+        showFollowUp();
     }
 }
 
