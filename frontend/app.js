@@ -146,6 +146,58 @@ async function handleLogin(event) {
     }
 }
 
+// Show/hide the back button
+function setBackButton(visible) {
+    const btn = document.getElementById('back-btn');
+    if (btn) btn.style.display = visible ? 'block' : 'none';
+}
+
+// Go back one step in the conversation flow
+function goBack() {
+    if (conversationState.meetingScheduled) return;
+
+    const inputSection = document.getElementById('input-section');
+
+    // Remove suggestions widget if present
+    const widget = document.getElementById('time-slots-widget');
+    if (widget) widget.remove();
+
+    switch (conversationState.step) {
+        case 'purpose':
+            // Back to duration selection
+            conversationState.step = 'greeting';
+            conversationState.duration = null;
+            showDurationSelection();
+            break;
+
+        case 'online':
+            // Back to purpose input (pre-fill previous answer)
+            conversationState.step = 'purpose';
+            conversationState.purpose = '';
+            showPurposeInput();
+            break;
+
+        case 'processing':
+            // If email input is visible, go back to the suggestions
+            if (document.getElementById('attendee-email')) {
+                inputSection.innerHTML = '';
+                showThreeSuggestions(conversationState.suggestedLocation);
+            } else {
+                // Otherwise go back to online/in-person selection
+                conversationState.step = 'online';
+                conversationState.isOnline = null;
+                conversationState.suggestedTimes = [];
+                conversationState.currentSuggestionIndex = 0;
+                conversationState.rejectedTimes = [];
+                showOnlineSelection();
+            }
+            break;
+
+        default:
+            break;
+    }
+}
+
 // Show greeting message
 async function showGreeting() {
     const greeting = "Hello! I'm here to help you book time with Greta.\nTo get started, I'll need a few details:\n";
@@ -165,6 +217,7 @@ function showDurationSelection() {
             </div>
         </div>
     `;
+    setBackButton(false);
 }
 
 // Select duration
@@ -204,6 +257,7 @@ function showPurposeInput() {
     `;
     
     document.getElementById('purpose-input').focus();
+    setBackButton(true);
 }
 
 // Submit purpose
@@ -236,6 +290,7 @@ function showOnlineSelection() {
             </div>
         </div>
     `;
+    setBackButton(true);
 }
 
 // Select online/offline
@@ -518,6 +573,7 @@ async function createEvent(startIso, endIso, attendeeEmail) {
         
         // Mark meeting as scheduled
         conversationState.meetingScheduled = true;
+        setBackButton(false);
         
         // Hide the input section completely
         inputSection.style.display = 'none';

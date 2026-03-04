@@ -137,7 +137,7 @@ body {
     border: 2px solid #ffffff;
     color: #ffffff;
     font-family: 'Courier New', monospace;
-    font-size: 14px;
+    font-size: 16px;
     cursor: pointer;
     transition: all 0.3s ease;
     text-transform: uppercase;
@@ -397,5 +397,29 @@ body {
     font-size: 14px;
     margin-top: 10px;
     text-align: center;
+}
+
+/* Persistent back button — fixed to bottom-right of the app container */
+.back-btn {
+    display: none;
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    padding: 10px 20px;
+    background-color: #000000;
+    border: 2px solid #ffffff;
+    color: #ffffff;
+    font-family: 'Courier New', monospace;
+    font-size: 13px;
+    cursor: pointer;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    opacity: 0.4;
+    transition: opacity 0.2s ease;
+    z-index: 100;
+}
+
+.back-btn:hover {
+    opacity: 1;
 }
 
