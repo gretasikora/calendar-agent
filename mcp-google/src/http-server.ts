@@ -18,18 +18,13 @@ let oauth2Client: OAuth2Client;
 let tokenManager: TokenManager;
 
 async function initialize(): Promise<void> {
-  try {
-    oauth2Client = await initializeOAuth2Client();
-    tokenManager = new TokenManager(oauth2Client);
-    const tokensValid = await tokenManager.validateTokens();
-    if (!tokensValid) {
-      throw new Error('Authentication required. Please run "npm run auth" first.');
-    }
-    console.log("OAuth client initialized");
-  } catch (error) {
-    console.error("Failed to initialize OAuth:", error);
-    process.exit(1);
+  oauth2Client = await initializeOAuth2Client();
+  tokenManager = new TokenManager(oauth2Client);
+  const tokensValid = await tokenManager.validateTokens();
+  if (!tokensValid) {
+    throw new Error('Authentication required. Please run "npm run auth" first.');
   }
+  console.log("OAuth client initialized");
 }
 
 app.get("/health", (req, res) => {
@@ -181,6 +176,7 @@ app.post("/mcp/calendar", async (req, res) => {
 const PORT = process.env.PORT || 3000;
 
 async function startServer(): Promise<void> {
+  console.log(`BOOT http-server node=${process.version} PORT=${PORT}`);
   await initialize();
   app.listen(PORT, () => {
     console.log(`MCP HTTP Server running on http://localhost:${PORT}`);
@@ -188,4 +184,7 @@ async function startServer(): Promise<void> {
   });
 }
 
-startServer().catch(console.error);
+startServer().catch((err) => {
+  console.error("STARTUP FAILED:", err);
+  process.exitCode = 1;
+});
