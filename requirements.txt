@@ -11,6 +11,11 @@ agent-squad[openai]
 # OpenAI SDK (used by agent-squad OpenAI agents)
 openai
 
+# Required transitively by agent-squad: its retrievers package imports
+# amazon_kb_retriever (and thus boto3) at import time, even when only the
+# OpenAI agents are used.
+boto3
+
 # Date/time utilities for calendar scheduling
 python-dateutil
 pytz
