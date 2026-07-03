@@ -36,7 +36,7 @@ export class ListEventsHandler extends BaseToolHandler {
         };
     }
 
-    private async fetchEvents(
+    public async fetchEvents(
         client: OAuth2Client,
         calendarIds: string[],
         options: { timeMin?: string; timeMax?: string }

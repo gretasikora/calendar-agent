@@ -27,11 +27,7 @@ export class AuthServer {
       // Generate the URL using the active flow client if available, else base
       const clientForUrl = this.flowOAuth2Client || this.baseOAuth2Client;
       const scopes = [
-        'https://www.googleapis.com/auth/calendar',
-        'https://www.googleapis.com/auth/contacts',
-        'https://www.googleapis.com/auth/gmail.modify',
-        'https://www.googleapis.com/auth/gmail.send',
-        'https://www.googleapis.com/auth/gmail.labels'
+        'https://www.googleapis.com/auth/calendar'
       ];
       const authUrl = clientForUrl.generateAuthUrl({
         access_type: 'offline',
@@ -44,7 +40,7 @@ export class AuthServer {
         <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Google Workspace MCP Authentication</title>
+            <title>Calendar Agent Authentication</title>
             <style>
                 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; background-color: #f5f5f5; margin: 0; padding: 20px; }
                 .container { text-align: center; padding: 2.5em; background-color: #fff; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); max-width: 500px; }
@@ -62,31 +58,22 @@ export class AuthServer {
         </head>
         <body>
             <div class="container">
-                <h1>🗓️ Google Workspace MCP</h1>
+                <h1>🗓️ Calendar Agent</h1>
                 <h2>Authentication Required</h2>
-                <p>Claude Desktop needs permission to access your Google Calendar, Contacts, and Gmail.</p>
+                <p>The Calendar Agent needs permission to access your Google Calendar.</p>
                 
                 <div class="permissions">
-                    <h3>This will allow Claude to:</h3>
+                    <h3>This will allow the agent to:</h3>
                     <ul>
                         <li>View your calendar events</li>
                         <li>Create new calendar events</li>
                         <li>Update existing events</li>
                         <li>Delete events</li>
                         <li>Check your availability</li>
-                        <li>View and manage your contacts</li>
-                        <li>Create new contacts</li>
-                        <li>Update existing contacts</li>
-                        <li>Delete contacts</li>
-                        <li>Read and search your emails</li>
-                        <li>Send emails on your behalf</li>
-                        <li>Create and manage email drafts</li>
-                        <li>Organize emails with labels</li>
-                        <li>Mark emails as read/unread</li>
                     </ul>
                 </div>
                 
-                <a href="${authUrl}" class="btn">Connect Google Workspace</a>
+                <a href="${authUrl}" class="btn">Connect Google Calendar</a>
                 
                 <p class="footer">You'll be redirected to Google to sign in securely.<br>Your credentials are never stored by this application.</p>
             </div>
@@ -206,11 +193,7 @@ export class AuthServer {
       const authorizeUrl = this.flowOAuth2Client.generateAuthUrl({
         access_type: 'offline',
         scope: [
-          'https://www.googleapis.com/auth/calendar',
-          'https://www.googleapis.com/auth/contacts',
-          'https://www.googleapis.com/auth/gmail.modify',
-          'https://www.googleapis.com/auth/gmail.send',
-          'https://www.googleapis.com/auth/gmail.labels'
+          'https://www.googleapis.com/auth/calendar'
         ],
         prompt: 'consent'
       });

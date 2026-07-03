@@ -5,24 +5,15 @@ python-dotenv
 flask
 flask-cors
 
-# AWS Agent Squad framework
-agent-squad[aws]
+# Agent Squad framework (OpenAI agents + classifier)
+agent-squad[openai]
 
-# OpenAI SDK (required by agent-squad)
+# OpenAI SDK (used by agent-squad OpenAI agents)
 openai
-
-# AWS SDK
-boto3
-
-# Google Calendar API
-google-api-python-client
-google-auth-httplib2
-google-auth-oauthlib
 
 # Date/time utilities for calendar scheduling
 python-dateutil
 pytz
 
-# Async HTTP client
+# Async HTTP client (used to call the MCP server)
 aiohttp
-

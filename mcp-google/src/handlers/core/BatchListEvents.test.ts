@@ -179,9 +179,9 @@ describe('Batch List Events Functionality', () => {
 
       expect(result.content).toHaveLength(1);
       expect(result.content[0].type).toBe('text');
-      expect(result.content[0].text).toContain('Meeting (event1)');
-      expect(result.content[0].text).toContain('Lunch (event2)');
-      expect(result.content[0].text).toContain('Location: Restaurant');
+      expect((result.content[0] as any).text).toContain('Meeting (event1)');
+      expect((result.content[0] as any).text).toContain('Lunch (event2)');
+      expect((result.content[0] as any).text).toContain('Location: Restaurant');
     });
 
     it('should handle empty results for single calendar', async () => {
@@ -199,7 +199,7 @@ describe('Batch List Events Functionality', () => {
       const result = await listEventsHandler.runTool(args, mockOAuth2Client);
 
       // Assert
-      expect(result.content[0].text).toContain('No events found');
+      expect((result.content[0] as any).text).toContain('No events found');
     });
   });
 
@@ -659,7 +659,7 @@ describe('Batch List Events Functionality', () => {
         orderBy: 'startTime'
       });
 
-      expect(result.content[0].text).toContain('Single Calendar Event');
+      expect((result.content[0] as any).text).toContain('Single Calendar Event');
     });
   });
 });

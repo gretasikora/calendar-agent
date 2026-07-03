@@ -188,14 +188,7 @@ async def suggest_online_times(
         
         # Suggest right before (if within preferred window, in the future, and not today)
         before_time = event_start - datetime.timedelta(minutes=duration_minutes)
-        # Debug: Log what we're checking
-        print(f"[DEBUG suggest_online_times] Checking before suggestion:")
-        print(f"  Event: {event.get('summary', 'Unknown')} at {event_start}")
-        print(f"  before_time: {before_time}, now: {now}")
-        print(f"  Checks: before_time > now: {before_time > now}, date > now.date(): {before_time.date() > now.date()}")
-        print(f"  Hour check: {before_time.hour} > {preferred_start_hour} or ({before_time.hour} == {preferred_start_hour} and {before_time.minute} >= {preferred_start_minute})")
-        print(f"  Hour < end: {before_time.hour < preferred_end_hour}")
-        
+
         if (before_time > now and  # Must be in the future
             before_time.date() > now.date() and  # Must not be today
             (before_time.hour > preferred_start_hour or 
@@ -207,7 +200,6 @@ async def suggest_online_times(
                 end_iso = format_iso_datetime(slot_end)
                 if not is_time_rejected(start_iso, end_iso, rejected_times):
                     is_free = await is_slot_free(before_time, slot_end, events, mcp_post_func, buffer_minutes=0, calendar_email=calendar_email)
-                    print(f"[DEBUG] Before suggestion {before_time} - {slot_end}: is_free={is_free}")
                     if is_free:
                         # Use generic reason - don't reveal information about other meetings
                         suggestions.append({
@@ -215,17 +207,8 @@ async def suggest_online_times(
                             "end_iso": end_iso,
                             "reason": "Available time slot"  # Generic reason, no private info
                         })
-                        print(f"[DEBUG] [OK] Added before suggestion: {start_iso} - {end_iso}")
                         if len(suggestions) >= 5:  # Stop if we have enough
                             break
-                    else:
-                        print(f"[DEBUG] [FAIL] Before suggestion {before_time} - {slot_end} is NOT free")
-                else:
-                    print(f"[DEBUG] [SKIP] Before suggestion {before_time} - {slot_end} was already rejected")
-            else:
-                print(f"[DEBUG] [FAIL] Before suggestion hour {before_time.hour} >= preferred_end_hour {preferred_end_hour}")
-        else:
-            print(f"[DEBUG] [FAIL] Before suggestion {before_time} failed initial checks")
         
         # Suggest right after (if within preferred window, in the future, and not today)
         if len(suggestions) >= 5:  # Stop if we have enough before checking "after"
@@ -372,15 +355,6 @@ async def suggest_inperson_times(
     # Get current time to ensure we don't suggest past times
     now = datetime.datetime.now(datetime.timezone.utc)
     
-    # Debug: Log events being checked
-    print(f"\n[DEBUG suggest_inperson_times] Checking {len(events)} events for conflicts")
-    for event in events[:3]:  # Show first 3
-        event_start = event.get("start", {}).get("dateTime") or event.get("start", {}).get("date", "")
-        event_end = event.get("end", {}).get("dateTime") or event.get("end", {}).get("date", "")
-        summary = event.get("summary", "No title")
-        is_online = is_online_meeting(event)
-        print(f"  Event: {summary} | {event_start} - {event_end} | Online: {is_online}")
-    
     # Preference 1: Determine tone and suggest accordingly
     if is_friendly:
         # Friendly meetings: lunch, dinner (6:30 PM+), or evening for pub
@@ -420,9 +394,6 @@ async def suggest_inperson_times(
             ).replace(tzinfo=datetime.timezone.utc)
             dinner_end = dinner_time + datetime.timedelta(minutes=duration_minutes)
             
-            # Debug: Log what we're checking
-            print(f"[DEBUG] Checking dinner time: {dinner_time} - {dinner_end}")
-            
             # Only suggest if in the future
             if dinner_time > now:
                 # Check if this time was already rejected
@@ -432,8 +403,6 @@ async def suggest_inperson_times(
                     continue  # Skip rejected times
                 
                 is_free = await is_slot_free(dinner_time, dinner_end, events, mcp_post_func, buffer_minutes=0, calendar_email=calendar_email, is_inperson_meeting=True)
-                if is_free:
-                    print(f"[DEBUG] Dinner time {dinner_time} is FREE")
                 if is_free:
                     suggestions.append({
                         "start_iso": start_iso,
@@ -648,24 +617,9 @@ async def is_slot_free(
             # This ensures that if an event ends at 6:00 PM, we can't schedule anything starting before 6:30 PM
             overlaps = check_start < effective_event_end and effective_event_start < end
             
-            # Debug: Log the overlap check for in-person meetings
-            if is_inperson_meeting and existing_is_inperson:
-                event_summary = event.get("summary", "Unknown")
-                print(f"[DEBUG is_slot_free] Checking: suggested {start} - {end} vs event '{event_summary}' ({event_start} - {event_end})")
-                print(f"  -> Buffer applied: effective range {effective_event_start} - {effective_event_end}")
-                print(f"  -> Overlap check: {check_start} < {effective_event_end} = {check_start < effective_event_end}, {effective_event_start} < {end} = {effective_event_start < end}")
-                print(f"  -> Result: {'CONFLICT' if overlaps else 'FREE'}")
-            
             if overlaps:
-                # Debug: Log why slot is not free
-                event_summary = event.get("summary", "Unknown")
-                print(f"[DEBUG is_slot_free] Slot CONFLICT: Suggested {start} - {end} conflicts with event '{event_summary}' ({event_start} - {event_end})")
-                if is_inperson_meeting and existing_is_inperson:
-                    print(f"  -> In-person buffer applied: effective range {effective_event_start} - {effective_event_end}")
                 return False
-        except Exception as e:
-            # Debug: Log parsing errors
-            print(f"[DEBUG is_slot_free] Error parsing event: {e}")
+        except Exception:
             continue
     
     # Slot is free if no overlapping events found

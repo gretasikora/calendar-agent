@@ -81,10 +81,8 @@ Token storage:
 To get OAuth credentials:
 1. Go to the Google Cloud Console (https://console.cloud.google.com/)
 2. Create or select a project
-3. Enable these APIs:
+3. Enable this API:
    - Google Calendar API
-   - Google People API
-   - Gmail API
 4. Create OAuth 2.0 credentials (Desktop app type)
 5. Copy the Client ID and Client Secret
 `.trim();

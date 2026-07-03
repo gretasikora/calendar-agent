@@ -56,10 +56,8 @@ Token storage:
 To get OAuth credentials:
 1. Go to the Google Cloud Console (https://console.cloud.google.com/)
 2. Create or select a project
-3. Enable these APIs:
+3. Enable this API:
    - Google Calendar API
-   - Google People API
-   - Gmail API
 4. Create OAuth 2.0 credentials (Desktop app type)
 5. Copy the Client ID and Client Secret
 `.trim();
@@ -140,6 +138,10 @@ import { GaxiosError } from "gaxios";
 var TokenManager = class {
   oauth2Client;
   tokenPath;
+  // When tokens are supplied via the GOOGLE_CALENDAR_TOKENS env var (e.g. on
+  // Railway), the filesystem is ephemeral and not the source of truth. In that
+  // case we keep refreshed credentials in memory only and skip file writes.
+  usingEnvTokens = false;
   constructor(oauth2Client) {
     this.oauth2Client = oauth2Client;
     this.tokenPath = getSecureTokenPath();
@@ -162,6 +164,10 @@ var TokenManager = class {
   }
   setupTokenRefresh() {
     this.oauth2Client.on("tokens", async (newTokens) => {
+      if (this.usingEnvTokens) {
+        console.error("Access token refreshed (in-memory; sourced from environment)");
+        return;
+      }
       try {
         await this.ensureTokenDirectoryExists();
         const currentTokens = JSON.parse(await fs2.readFile(this.tokenPath, "utf-8"));
@@ -224,6 +230,7 @@ var TokenManager = class {
           const tokens2 = JSON.parse(envTokens);
           if (tokens2 && typeof tokens2 === "object") {
             this.oauth2Client.setCredentials(tokens2);
+            this.usingEnvTokens = true;
             console.log("Loaded tokens from environment variable");
             return true;
           }
@@ -301,10 +308,14 @@ var TokenManager = class {
     return this.refreshTokensIfNeeded();
   }
   async saveTokens(tokens) {
+    this.oauth2Client.setCredentials(tokens);
+    if (this.usingEnvTokens) {
+      console.error("Tokens set in memory (sourced from environment; not written to disk)");
+      return;
+    }
     try {
       await this.ensureTokenDirectoryExists();
       await fs2.writeFile(this.tokenPath, JSON.stringify(tokens, null, 2), { mode: 384 });
-      this.oauth2Client.setCredentials(tokens);
       console.error("Tokens saved successfully to:", this.tokenPath);
     } catch (error) {
       console.error("Error saving tokens:", error);
@@ -350,11 +361,7 @@ var AuthServer = class {
     this.app.get("/", (req, res) => {
       const clientForUrl = this.flowOAuth2Client || this.baseOAuth2Client;
       const scopes = [
-        "https://www.googleapis.com/auth/calendar",
-        "https://www.googleapis.com/auth/contacts",
-        "https://www.googleapis.com/auth/gmail.modify",
-        "https://www.googleapis.com/auth/gmail.send",
-        "https://www.googleapis.com/auth/gmail.labels"
+        "https://www.googleapis.com/auth/calendar"
       ];
       const authUrl = clientForUrl.generateAuthUrl({
         access_type: "offline",
@@ -367,7 +374,7 @@ var AuthServer = class {
         <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Google Workspace MCP Authentication</title>
+            <title>Calendar Agent Authentication</title>
             <style>
                 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; background-color: #f5f5f5; margin: 0; padding: 20px; }
                 .container { text-align: center; padding: 2.5em; background-color: #fff; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); max-width: 500px; }
@@ -385,31 +392,22 @@ var AuthServer = class {
         </head>
         <body>
             <div class="container">
-                <h1>\u{1F5D3}\uFE0F Google Workspace MCP</h1>
+                <h1>\u{1F5D3}\uFE0F Calendar Agent</h1>
                 <h2>Authentication Required</h2>
-                <p>Claude Desktop needs permission to access your Google Calendar, Contacts, and Gmail.</p>
+                <p>The Calendar Agent needs permission to access your Google Calendar.</p>
                 
                 <div class="permissions">
-                    <h3>This will allow Claude to:</h3>
+                    <h3>This will allow the agent to:</h3>
                     <ul>
                         <li>View your calendar events</li>
                         <li>Create new calendar events</li>
                         <li>Update existing events</li>
                         <li>Delete events</li>
                         <li>Check your availability</li>
-                        <li>View and manage your contacts</li>
-                        <li>Create new contacts</li>
-                        <li>Update existing contacts</li>
-                        <li>Delete contacts</li>
-                        <li>Read and search your emails</li>
-                        <li>Send emails on your behalf</li>
-                        <li>Create and manage email drafts</li>
-                        <li>Organize emails with labels</li>
-                        <li>Mark emails as read/unread</li>
                     </ul>
                 </div>
                 
-                <a href="${authUrl}" class="btn">Connect Google Workspace</a>
+                <a href="${authUrl}" class="btn">Connect Google Calendar</a>
                 
                 <p class="footer">You'll be redirected to Google to sign in securely.<br>Your credentials are never stored by this application.</p>
             </div>
@@ -513,11 +511,7 @@ var AuthServer = class {
       const authorizeUrl = this.flowOAuth2Client.generateAuthUrl({
         access_type: "offline",
         scope: [
-          "https://www.googleapis.com/auth/calendar",
-          "https://www.googleapis.com/auth/contacts",
-          "https://www.googleapis.com/auth/gmail.modify",
-          "https://www.googleapis.com/auth/gmail.send",
-          "https://www.googleapis.com/auth/gmail.labels"
+          "https://www.googleapis.com/auth/calendar"
         ],
         prompt: "consent"
       });
@@ -621,4 +615,7 @@ if (import.meta.url.endsWith("auth-server.js")) {
     process.exit(1);
   });
 }
+export {
+  runAuthServer
+};
 //# sourceMappingURL=auth-server.js.map

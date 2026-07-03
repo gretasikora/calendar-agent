@@ -100,66 +100,16 @@ async def get_events_for_window(start_iso: str, end_iso: str, calendar_email: st
     if calendar_email is None:
         calendar_email = await get_primary_calendar_email()
     
-    # Normalize ISO format to match regex: ^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?(Z|[+-]\d{2}:\d{2})$
+    # Normalize ISO strings to the format the MCP server expects:
+    # ^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?(Z|[+-]\d{2}:\d{2})$
     def normalize_iso(iso_str: str) -> str:
-        """Ensure ISO string matches the MCP server regex pattern."""
-        try:
-            # Parse the datetime
-            dt = dateparser.isoparse(iso_str)
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=datetime.timezone.utc)
-            else:
-                dt = dt.astimezone(datetime.timezone.utc)
-            
-            # Format as: YYYY-MM-DDTHH:MM:SS (no microseconds)
-            # Remove microseconds by replacing with empty string
-            formatted = dt.strftime('%Y-%m-%dT%H:%M:%S')
-            
-            # Append 'Z' for UTC
-            return formatted + 'Z'
-        except Exception as e:
-            # Fallback: try to fix the string directly
-            # Remove microseconds (keep only seconds or milliseconds)
-            if '.' in iso_str:
-                # Split on '.' to handle microseconds
-                parts = iso_str.split('.')
-                if len(parts) == 2:
-                    # Has microseconds/milliseconds
-                    date_part = parts[0]
-                    micro_part = parts[1]
-                    # Remove timezone from micro part if present
-                    if '+' in micro_part or '-' in micro_part[-6:]:
-                        # Extract timezone
-                        if '+' in micro_part:
-                            tz_part = '+' + micro_part.split('+')[1]
-                            micro_part = micro_part.split('+')[0]
-                        else:
-                            # Find timezone at the end
-                            tz_part = micro_part[-6:]
-                            micro_part = micro_part[:-6]
-                    else:
-                        tz_part = ''
-                    
-                    # Keep only first 3 digits (milliseconds) or remove if more
-                    if len(micro_part) > 3:
-                        micro_part = micro_part[:3]
-                    elif len(micro_part) == 0:
-                        # No microseconds, just use date part
-                        iso_str = date_part + (tz_part if tz_part else '')
-                    else:
-                        # Has milliseconds, keep them
-                        iso_str = date_part + '.' + micro_part + (tz_part if tz_part else '')
-            
-            # Replace +00:00 or -00:00 with Z
-            iso_str = iso_str.replace('+00:00', 'Z').replace('-00:00', 'Z')
-            
-            # If it doesn't end with Z, add it
-            if not iso_str.endswith('Z') and not re.match(r'[+-]\d{2}:\d{2}$', iso_str[-6:]):
-                # Remove any existing timezone and add Z
-                iso_str = re.sub(r'[+-]\d{2}:\d{2}$', '', iso_str)
-                iso_str = iso_str.rstrip('Z') + 'Z'
-            
-            return iso_str
+        dt = dateparser.isoparse(iso_str)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=datetime.timezone.utc)
+        else:
+            dt = dt.astimezone(datetime.timezone.utc)
+        # UTC, second precision, trailing 'Z'
+        return dt.strftime('%Y-%m-%dT%H:%M:%S') + 'Z'
     
     normalized_start = normalize_iso(start_iso)
     normalized_end = normalize_iso(end_iso)
@@ -195,22 +145,6 @@ async def get_events_for_window(start_iso: str, end_iso: str, calendar_email: st
                     if isinstance(item, dict) and "text" in item:
                         # Content might be text description, not event data
                         pass
-    
-    # Debug: Log what we got from MCP
-    print(f"[DEBUG get_events_for_window] MCP returned {len(events)} events")
-    if len(events) == 0:
-        print(f"[DEBUG] MCP result structure: {list(result.keys()) if isinstance(result, dict) else type(result)}")
-        if isinstance(result, dict):
-            if "raw" in result:
-                print(f"[DEBUG] Raw data type: {type(result['raw'])}")
-                print(f"[DEBUG] Raw data value: {result['raw']}")
-            if "content" in result:
-                print(f"[DEBUG] Content: {result['content']}")
-            if "events" in result:
-                print(f"[DEBUG] Events field: {type(result['events'])}, value: {result['events']}")
-            # Print full result for debugging
-            print(f"[DEBUG] Full result keys: {list(result.keys())}")
-            print(f"[DEBUG] Full result (first 500 chars): {str(result)[:500]}")
     
     return events
 
@@ -555,16 +489,6 @@ async def check_busy(
     calendar_email = MCP_CALENDAR_EMAIL or await get_primary_calendar_email()
     events = await get_events_for_window(query_start_iso, query_end_iso, calendar_email)
     
-    # Debug: Log events retrieved
-    print(f"\n[DEBUG] Retrieved {len(events)} events from calendar")
-    for i, event in enumerate(events[:5]):  # Show first 5 events
-        event_start = event.get("start", {}).get("dateTime") or event.get("start", {}).get("date", "")
-        event_end = event.get("end", {}).get("dateTime") or event.get("end", {}).get("date", "")
-        summary = event.get("summary", "No title")
-        location = event.get("location", "")
-        is_online = is_online_meeting(event)
-        print(f"  Event {i+1}: {summary} | {event_start} - {event_end} | Location: {location} | Online: {is_online}")
-    
     # Step 3: Check if requested time is busy (accounting for buffers for in-person meetings)
     requested_start = dateparser.isoparse(start_iso)
     requested_end = dateparser.isoparse(end_iso)
@@ -674,7 +598,6 @@ async def check_busy(
     # Skip LLM formatting if requested (e.g., when fetching more suggestions)
     # This prevents the LLM from generating "I understand those times don't work" messages
     if skip_llm_formatting:
-        print(f"[DEBUG] Skipping LLM formatting - using template message")
         # Use simple template message when fetching more suggestions
         if suggested_times and len(suggested_times) > 0:
             first_suggestion = suggested_times[0]
@@ -690,12 +613,9 @@ async def check_busy(
                 suggested_times_text = f"{start_iso} - {end_iso}"
             location_text = f" at {suggested_location}" if suggested_location else ""
             assistant_reply = f"What about {suggested_times_text}{location_text}? Does that work for you?"
-            print(f"[DEBUG] Generated template message: {assistant_reply}")
         else:
             assistant_reply = "Let me check for more available times..."
-            print(f"[DEBUG] No suggestions - using fallback message")
     else:
-        print(f"[DEBUG] Using LLM formatting")
         assistant_reply = await format_reply_with_llm(
             is_busy,
             overlaps_list,
@@ -706,7 +626,6 @@ async def check_busy(
             meeting_type=meeting_type,
             duration_minutes=duration_minutes
         )
-        print(f"[DEBUG] LLM generated response: {assistant_reply[:100]}...")
     
     # Return dict with response and suggestions
     result = {

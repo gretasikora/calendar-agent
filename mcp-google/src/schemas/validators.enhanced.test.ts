@@ -159,7 +159,9 @@ describe('Enhanced UpdateEventArgumentsSchema', () => {
         if (scope === 'single') {
           args.originalStartTime = '2024-06-15T10:00:00-07:00';
         } else if (scope === 'future') {
-          args.futureStartDate = '2025-12-31T10:00:00-08:00';
+          const futureDate = new Date();
+          futureDate.setFullYear(futureDate.getFullYear() + 1);
+          args.futureStartDate = futureDate.toISOString();
         }
 
         const result = EnhancedUpdateEventArgumentsSchema.parse(args);
@@ -249,7 +251,8 @@ describe('Enhanced UpdateEventArgumentsSchema', () => {
     });
 
     it('should accept valid futureStartDate for future scope', () => {
-      const futureDate = new Date('2025-06-15T10:00:00Z'); // Use a specific future date
+      const futureDate = new Date();
+      futureDate.setFullYear(futureDate.getFullYear() + 1); // Ensure the date is in the future
       const futureDateString = futureDate.toISOString();
 
       const args = {
@@ -342,7 +345,8 @@ describe('Enhanced UpdateEventArgumentsSchema', () => {
 
   describe('Complex Scenarios', () => {
     it('should validate complete update with all fields', () => {
-      const futureDate = new Date('2025-06-15T10:00:00Z'); // Use a specific future date
+      const futureDate = new Date();
+      futureDate.setFullYear(futureDate.getFullYear() + 1); // Ensure the date is in the future
 
       const args = {
         calendarId: 'primary',

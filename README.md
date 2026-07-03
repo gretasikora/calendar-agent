@@ -5,7 +5,7 @@ An AI-powered scheduling assistant with a web UI. It understands natural languag
 Deployed as two services on Railway:
 
 - **Flask API** — Python backend + frontend. Handles the conversation, calls the MCP server for calendar data, and orchestrates two OpenAI agents (time parsing + response formatting).
-- **MCP Google Server** — Node.js service that wraps the Google Calendar, Gmail, and Contacts APIs via OAuth2. Exposes a simple HTTP endpoint that the Flask API calls.
+- **MCP Google Server** — Node.js service that wraps the Google Calendar API via OAuth2. Exposes a simple HTTP endpoint that the Flask API calls.
 
 ---
 
@@ -45,9 +45,9 @@ calendar-agent/
 │   ├── index.html         # Web UI
 │   ├── app.js             # Frontend JavaScript
 │   └── styles.css         # Styles
-└── mcp-google/            # Modified mcp-google Node.js MCP server
-    ├── src/               # TypeScript source
-    ├── build/             # Compiled JS (committed — includes http-server.js)
+└── mcp-google/            # Vendored Google Calendar MCP server (Node.js)
+    ├── src/               # TypeScript source (includes http-server.ts)
+    ├── build/             # Compiled JS (committed, regenerated from src by npm run build)
     ├── Dockerfile         # Docker image for MCP service (used by Railway)
     ├── package.json
     └── format-tokens-for-railway.js  # Helper to format tokens for Railway env var
@@ -126,10 +126,8 @@ Open http://localhost:5000 in your browser. The Flask server also serves the fro
 
 1. Go to [Google Cloud Console](https://console.cloud.google.com/)
 2. Create or select a project
-3. Enable these APIs under **APIs & Services → Library**:
+3. Enable this API under **APIs & Services → Library**:
    - Google Calendar API
-   - Google People API
-   - Gmail API
 4. Go to **APIs & Services → OAuth consent screen**
    - Configure the app (name, support email)
    - Add your Google account as a test user
@@ -143,7 +141,7 @@ Open http://localhost:5000 in your browser. The Flask server also serves the fro
 
 ## Deployment (Railway)
 
-The app deploys as two separate Railway services from the same GitHub repo. See [SETUP.md](SETUP.md) for the complete end-to-end guide covering Google Cloud setup, local OAuth authentication, and Railway deployment.
+The app deploys as two separate Railway services from the same GitHub repo. The full setup — Google Cloud setup, local OAuth authentication, and Railway deployment — is covered in the sections above and below.
 
 **Quick summary:**
 
@@ -170,7 +168,7 @@ GOOGLE_CALENDAR_TOKENS=...   # Single-line JSON from: node format-tokens-for-rai
 
 ### Renewing OAuth tokens
 
-The MCP server automatically refreshes the short-lived `access_token` (1 hour) using the long-lived `refresh_token` on every API call. You should only need to manually re-authenticate if the refresh token becomes invalid.
+The MCP server validates and, if needed, refreshes the short-lived `access_token` (1 hour) using the long-lived `refresh_token` on every API request. On Railway the tokens come from the `GOOGLE_CALENDAR_TOKENS` env var, so the `refresh_token` in that variable is the source of truth — refreshed access tokens are kept in memory only. You should only need to manually re-authenticate if the refresh token becomes invalid.
 
 To re-authenticate:
 

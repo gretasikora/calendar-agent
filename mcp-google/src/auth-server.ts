@@ -2,7 +2,7 @@ import { initializeOAuth2Client } from './auth/client.js';
 import { AuthServer } from './auth/server.js';
 
 // Main function to run the authentication server
-async function runAuthServer() {
+export async function runAuthServer() {
   let authServer: AuthServer | null = null; // Keep reference for cleanup
   try {
     // Initialize OAuth client

@@ -15,6 +15,7 @@ import { AuthServer } from './auth/server.js';
 import { TokenManager } from './auth/tokenManager.js';
 import { getToolDefinitions } from './handlers/listTools.js';
 import { handleCallTool } from './handlers/callTool.js';
+import { runAuthServer } from './auth-server.js';
 
 // Get package version
 const __filename = fileURLToPath(import.meta.url);
@@ -103,50 +104,6 @@ async function cleanup() {
 }
 
 // --- Command Line Interface ---
-async function runAuthServer(): Promise<void> {
-  // Use the same logic as auth-server.ts
-  try {
-    // Initialize OAuth client
-    const oauth2Client = await initializeOAuth2Client();
-
-    // Create and start the auth server
-    const authServerInstance = new AuthServer(oauth2Client);
-
-    // Start with browser opening (true by default)
-    const success = await authServerInstance.start(true);
-
-    if (!success && !authServerInstance.authCompletedSuccessfully) {
-      // Failed to start and tokens weren't already valid
-      console.error(
-        "Authentication failed. Could not start server or validate existing tokens. Check port availability (3000-3004) and try again."
-      );
-      process.exit(1);
-    } else if (authServerInstance.authCompletedSuccessfully) {
-      // Auth was successful (either existing tokens were valid or flow completed just now)
-      console.log("Authentication successful.");
-      process.exit(0); // Exit cleanly if auth is already done
-    }
-
-    // If we reach here, the server started and is waiting for the browser callback
-    console.log(
-      "Authentication server started. Please complete the authentication in your browser..."
-    );
-
-    // Wait for completion
-    const intervalId = setInterval(async () => {
-      if (authServerInstance.authCompletedSuccessfully) {
-        clearInterval(intervalId);
-        await authServerInstance.stop();
-        console.log("Authentication completed successfully!");
-        process.exit(0);
-      }
-    }, 1000);
-  } catch (error) {
-    console.error("Authentication failed:", error);
-    process.exit(1);
-  }
-}
-
 function showHelp(): void {
   console.log(`
 Google Workspace MCP Server v${VERSION}

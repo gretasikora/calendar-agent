@@ -1,54 +1,9 @@
 {
-  "name": "mcp-google",
+  "name": "calendar-agent-mcp",
   "version": "2.3.0",
-  "description": "The ONLY comprehensive MCP server for Google Workspace - Calendar, Contacts, and Gmail management in Claude, Cursor, Windsurf",
+  "private": true,
+  "description": "Vendored Google Calendar MCP server for the calendar-agent project. Exposes an HTTP endpoint the Flask API calls for calendar data.",
   "type": "module",
-  "bin": {
-    "mcp-google": "build/index.js"
-  },
-  "files": [
-    "build/",
-    "README.md",
-    "LICENSE"
-  ],
-  "keywords": [
-    "mcp",
-    "model-context-protocol",
-    "claude",
-    "cursor",
-    "windsurf",
-    "google-calendar",
-    "google-contacts",
-    "google-gmail",
-    "gmail",
-    "email",
-    "google-workspace",
-    "workspace",
-    "calendar",
-    "contacts",
-    "ai",
-    "llm",
-    "integration",
-    "calendar-management",
-    "contact-management",
-    "oauth2",
-    "create-events",
-    "update-events",
-    "delete-events",
-    "people-api",
-    "gmail-api",
-    "email-management",
-    "inbox-management"
-  ],
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/199-mcp/mcp-google.git"
-  },
-  "bugs": {
-    "url": "https://github.com/199-mcp/mcp-google/issues"
-  },
-  "homepage": "https://github.com/199-mcp/mcp-google#readme",
-  "author": "199-mcp",
   "license": "MIT",
   "scripts": {
     "typecheck": "tsc --noEmit",

@@ -7,6 +7,10 @@ import { GaxiosError } from 'gaxios';
 export class TokenManager {
   private oauth2Client: OAuth2Client;
   private tokenPath: string;
+  // When tokens are supplied via the GOOGLE_CALENDAR_TOKENS env var (e.g. on
+  // Railway), the filesystem is ephemeral and not the source of truth. In that
+  // case we keep refreshed credentials in memory only and skip file writes.
+  private usingEnvTokens = false;
 
   constructor(oauth2Client: OAuth2Client) {
     this.oauth2Client = oauth2Client;
@@ -34,6 +38,13 @@ export class TokenManager {
 
   private setupTokenRefresh(): void {
     this.oauth2Client.on("tokens", async (newTokens) => {
+      // Tokens from the environment are held in memory only; the refreshed
+      // access token stays on the in-memory OAuth2Client. The long-lived
+      // refresh token in the env var remains the source of truth.
+      if (this.usingEnvTokens) {
+        console.error("Access token refreshed (in-memory; sourced from environment)");
+        return;
+      }
       try {
         await this.ensureTokenDirectoryExists();
         const currentTokens = JSON.parse(await fs.readFile(this.tokenPath, "utf-8"));
@@ -112,6 +123,7 @@ export class TokenManager {
           const tokens = JSON.parse(envTokens);
           if (tokens && typeof tokens === "object") {
             this.oauth2Client.setCredentials(tokens);
+            this.usingEnvTokens = true;
             console.log("Loaded tokens from environment variable");
             return true;
           }
@@ -213,10 +225,14 @@ export class TokenManager {
   }
 
   async saveTokens(tokens: Credentials): Promise<void> {
+    this.oauth2Client.setCredentials(tokens);
+    if (this.usingEnvTokens) {
+        console.error("Tokens set in memory (sourced from environment; not written to disk)");
+        return;
+    }
     try {
         await this.ensureTokenDirectoryExists();
         await fs.writeFile(this.tokenPath, JSON.stringify(tokens, null, 2), { mode: 0o600 });
-        this.oauth2Client.setCredentials(tokens);
         console.error("Tokens saved successfully to:", this.tokenPath);
     } catch (error: unknown) {
         console.error("Error saving tokens:", error);

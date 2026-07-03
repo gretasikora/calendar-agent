@@ -35,7 +35,7 @@ export class FreeBusyEventHandler extends BaseToolHandler {
     };
   }
 
-  private async queryFreeBusy(
+  public async queryFreeBusy(
     client: OAuth2Client,
     args: z.infer<typeof FreeBusyEventArgumentsSchema>
   ): Promise<FreeBusyResponse> {
