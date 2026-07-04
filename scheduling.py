@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 from preferences import (
     is_online_meeting, is_friendly_meeting,
     suggest_online_times, suggest_inperson_times,
-    get_upcoming_events
+    get_upcoming_events, resolve_timezone
 )
 
 # Load environment variables from .env file
@@ -297,7 +297,8 @@ async def format_reply_with_llm(
     suggested_times: List[Dict] = None,
     suggested_location: Optional[str] = None,
     meeting_type: Optional[str] = None,
-    duration_minutes: Optional[int] = None
+    duration_minutes: Optional[int] = None,
+    timezone: Optional[str] = None
 ) -> str:
     """
     Agent 2: Formats the availability check results into a conversational response.
@@ -353,11 +354,15 @@ async def format_reply_with_llm(
         end_iso = first_suggestion.get("end_iso", "")
         reason = first_suggestion.get("reason", "")
         try:
-            start_dt = dateparser.isoparse(start_iso)
-            end_dt = dateparser.isoparse(end_iso)
+            tz = resolve_timezone(timezone)
+            start_dt = dateparser.isoparse(start_iso).astimezone(tz)
+            end_dt = dateparser.isoparse(end_iso).astimezone(tz)
             start_str = start_dt.strftime("%A, %B %d at %I:%M %p")
             end_str = end_dt.strftime("%I:%M %p")
+            tz_label = start_dt.strftime("%Z")
             suggested_times_text = f"{start_str} - {end_str}"
+            if tz_label:
+                suggested_times_text += f" ({tz_label})"
             # DO NOT include reason - it contains private information about other meetings
         except:
             suggested_times_text = f"{start_iso} - {end_iso}"
@@ -443,7 +448,8 @@ async def check_busy(
     meeting_description: Optional[str] = None,
     duration_minutes: Optional[int] = None,
     rejected_times: Optional[List[Dict[str, str]]] = None,
-    skip_llm_formatting: bool = False  # If True, skip LLM and return simple message
+    skip_llm_formatting: bool = False,  # If True, skip LLM and return simple message
+    timezone: Optional[str] = None  # IANA timezone for interpreting/displaying wall-clock times
 ) -> Dict:
     """
     Top-level function that orchestrates the two-agent workflow.
@@ -559,7 +565,8 @@ async def check_busy(
                 end_date=query_end,
                 mcp_post_func=mcp_post,
                 calendar_email=calendar_email,
-                rejected_times=rejected_time_set
+                rejected_times=rejected_time_set,
+                local_tz=timezone
             )
         elif meeting_type == "in-person":
             # For in-person, we need description to determine if it's friendly or business
@@ -572,7 +579,8 @@ async def check_busy(
                     end_date=query_end,
                     mcp_post_func=mcp_post,
                     calendar_email=calendar_email,
-                    rejected_times=rejected_time_set
+                    rejected_times=rejected_time_set,
+                    local_tz=timezone
                 )
             else:
                 # If no description, use default business meeting logic
@@ -584,7 +592,8 @@ async def check_busy(
                     end_date=query_end,
                     mcp_post_func=mcp_post,
                     calendar_email=calendar_email,
-                    rejected_times=rejected_time_set
+                    rejected_times=rejected_time_set,
+                    local_tz=timezone
                 )
         
         # Filter out rejected times from final suggestions
@@ -604,11 +613,15 @@ async def check_busy(
             start_iso = first_suggestion.get("start_iso", "")
             end_iso = first_suggestion.get("end_iso", "")
             try:
-                start_dt = dateparser.isoparse(start_iso)
-                end_dt = dateparser.isoparse(end_iso)
+                tz = resolve_timezone(timezone)
+                start_dt = dateparser.isoparse(start_iso).astimezone(tz)
+                end_dt = dateparser.isoparse(end_iso).astimezone(tz)
                 start_str = start_dt.strftime("%A, %B %d at %I:%M %p")
                 end_str = end_dt.strftime("%I:%M %p")
+                tz_label = start_dt.strftime("%Z")
                 suggested_times_text = f"{start_str} - {end_str}"
+                if tz_label:
+                    suggested_times_text += f" ({tz_label})"
             except:
                 suggested_times_text = f"{start_iso} - {end_iso}"
             location_text = f" at {suggested_location}" if suggested_location else ""
@@ -624,7 +637,8 @@ async def check_busy(
             suggested_times=suggested_times,
             suggested_location=suggested_location,
             meeting_type=meeting_type,
-            duration_minutes=duration_minutes
+            duration_minutes=duration_minutes,
+            timezone=timezone
         )
     
     # Return dict with response and suggestions
@@ -651,7 +665,8 @@ async def create_calendar_event(
     location: Optional[str] = None,
     attendee_email: Optional[str] = None,
     attendee_name: Optional[str] = None,
-    meeting_description: Optional[str] = None
+    meeting_description: Optional[str] = None,
+    timezone: Optional[str] = None
 ) -> Dict:
     """
     Create a calendar event via MCP.
@@ -670,21 +685,18 @@ async def create_calendar_event(
     # Get calendar email
     calendar_email = MCP_CALENDAR_EMAIL or await get_primary_calendar_email()
     
-    # Determine timezone from start_iso (default to UTC)
-    timezone = "UTC"
-    if "+" in start_iso or start_iso.endswith("Z"):
-        if start_iso.endswith("Z"):
-            timezone = "UTC"
-        else:
-            timezone = "UTC"
-    
+    # The event's display timezone. start_iso/end_iso are absolute instants
+    # (UTC 'Z' or with an offset), so this only affects how Google shows the
+    # event; use the caller's IANA timezone when provided, else UTC.
+    event_timezone = timezone or "UTC"
+
     # Build event parameters
     event_params = {
         "calendarId": calendar_email,
         "summary": f"Greta <> {attendee_name}" if attendee_name else "Meeting with Greta",
         "start": start_iso,
         "end": end_iso,
-        "timeZone": timezone,
+        "timeZone": event_timezone,
     }
     
     # Add description if provided (includes the meeting purpose/reason)

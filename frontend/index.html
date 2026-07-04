@@ -8,21 +8,8 @@
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <!-- Login Screen (shown by default) -->
-    <div id="login-screen" class="login-screen" style="display: flex;">
-        <div class="login-container">
-            <h1>Calendar Booking Agent</h1>
-            <p>Enter the password to access the booking system</p>
-            <form id="login-form">
-                <input type="password" id="password-input" class="text-input" placeholder="Password" required autofocus />
-                <button type="submit" class="btn">Access</button>
-                <div id="login-error" class="error-message" style="display: none;"></div>
-            </form>
-        </div>
-    </div>
-
-    <!-- Main App (hidden until authenticated) -->
-    <div id="app-container" class="container" style="display: none;">
+    <!-- Main App -->
+    <div id="app-container" class="container" style="display: flex;">
         <div class="chat-container">
             <div id="chat-messages" class="chat-messages">
                 <!-- Messages will be added here dynamically -->

@@ -9,9 +9,6 @@ import asyncio
 from scheduling import check_busy, create_calendar_event
 import os
 from dotenv import load_dotenv
-import secrets
-from functools import wraps
-import hashlib
 
 # Load environment variables
 load_dotenv()
@@ -19,67 +16,7 @@ load_dotenv()
 app = Flask(__name__)
 CORS(app)  # Enable CORS for frontend
 
-# Simple token storage (in production, use Redis or database)
-# For this simple implementation, we'll use a single token
-AUTH_TOKEN = os.getenv('AUTH_TOKEN') or secrets.token_urlsafe(32)
-
-# Get access password from environment variable
-# Priority: .env file > environment variable > default 'changeme'
-ACCESS_PASSWORD = os.getenv('ACCESS_PASSWORD')
-if not ACCESS_PASSWORD:
-    ACCESS_PASSWORD = 'changeme'
-    print("WARNING: ACCESS_PASSWORD not set in .env file, using default 'changeme'")
-else:
-    print(f"ACCESS_PASSWORD loaded from .env file (length: {len(ACCESS_PASSWORD)})")
-
-# Store active sessions (in production, use Redis or database)
-active_tokens = set()
-
-def require_auth(f):
-    """Decorator to require authentication for API endpoints."""
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        auth_header = request.headers.get('Authorization')
-        if not auth_header:
-            return jsonify({'error': 'Authentication required'}), 401
-        
-        try:
-            token = auth_header.split(' ')[1]  # Extract token from "Bearer <token>"
-            if token not in active_tokens:
-                return jsonify({'error': 'Invalid or expired token'}), 401
-        except (IndexError, AttributeError):
-            return jsonify({'error': 'Invalid authorization header'}), 401
-        
-        return f(*args, **kwargs)
-    return decorated_function
-
-@app.route('/api/login', methods=['POST'])
-def login():
-    """
-    Login endpoint. Validates password and returns auth token.
-    """
-    try:
-        data = request.json
-        password = data.get('password', '')
-        
-        # Simple password check (in production, use proper password hashing)
-        if password == ACCESS_PASSWORD:
-            # Generate a session token
-            token = secrets.token_urlsafe(32)
-            active_tokens.add(token)
-            
-            return jsonify({
-                'token': token,
-                'message': 'Login successful'
-            }), 200
-        else:
-            return jsonify({'error': 'Incorrect password'}), 401
-    
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
 @app.route('/api/check-availability', methods=['POST'])
-@require_auth
 def check_availability():
     """
     Endpoint to check calendar availability.
@@ -94,7 +31,8 @@ def check_availability():
         duration_minutes = data.get('duration_minutes')  # Duration in minutes
         rejected_times = data.get('rejected_times', [])  # Times that have been rejected
         skip_llm_formatting = data.get('skip_llm_formatting', False)  # Skip LLM when fetching more suggestions
-        
+        timezone = data.get('timezone')  # Viewer's IANA timezone (e.g. "Europe/London")
+
         if not query:
             return jsonify({'error': 'Query is required'}), 400
         
@@ -110,7 +48,8 @@ def check_availability():
                     meeting_description=meeting_description,
                     duration_minutes=duration_minutes,
                     rejected_times=rejected_times,
-                    skip_llm_formatting=skip_llm_formatting
+                    skip_llm_formatting=skip_llm_formatting,
+                    timezone=timezone
                 )
             )
         finally:
@@ -144,7 +83,6 @@ def check_availability():
         }), 500
 
 @app.route('/api/create-event', methods=['POST'])
-@require_auth
 def create_event():
     """
     Endpoint to create a calendar event.
@@ -159,7 +97,8 @@ def create_event():
         attendee_email = data.get('attendee_email')
         attendee_name = data.get('attendee_name')  # Used in event title: "Greta <> Name"
         meeting_description = data.get('meeting_description')
-        
+        timezone = data.get('timezone')  # Viewer's IANA timezone for the event
+
         if not start_iso or not end_iso:
             return jsonify({'error': 'start_iso and end_iso are required'}), 400
         
@@ -175,7 +114,8 @@ def create_event():
                     location=location,
                     attendee_email=attendee_email,
                     attendee_name=attendee_name,
-                    meeting_description=meeting_description
+                    meeting_description=meeting_description,
+                    timezone=timezone
                 )
             )
         finally:
@@ -229,9 +169,6 @@ if __name__ == '__main__':
     port = int(os.getenv('PORT') or os.getenv('API_PORT', 5000))
     print(f"Starting API server on http://0.0.0.0:{port}")
     print(f"Frontend should be served from the 'frontend' directory")
-    print(f"Access password loaded from .env file")
-    print(f"Password length: {len(ACCESS_PASSWORD)} characters")
-    print(f"To change the password, update ACCESS_PASSWORD in your .env file")
     # Disable debug mode in production (Railway sets RAILWAY_ENVIRONMENT)
     debug_mode = os.getenv('RAILWAY_ENVIRONMENT') != 'production'
     app.run(host='0.0.0.0', port=port, debug=debug_mode)

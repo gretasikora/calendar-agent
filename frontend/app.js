@@ -18,34 +18,37 @@ let conversationState = {
 
 // Initialize the app
 document.addEventListener('DOMContentLoaded', () => {
-    // Always show login screen on page load
-    // User must enter password even if token exists in sessionStorage
-    showLogin();
-    
-    // Clear any existing token to force fresh login
-    authToken = null;
-    sessionStorage.removeItem('authToken');
-    isAuthenticated = false;
-    
-    // Attach login form handler (avoid inline event handlers for CSP compliance)
-    const loginForm = document.getElementById('login-form');
-    if (loginForm) {
-        loginForm.addEventListener('submit', handleLogin);
-    }
+    isAuthenticated = true;
+    showApp();
 });
-
-// Show login screen
-function showLogin() {
-    document.getElementById('login-screen').style.display = 'flex';
-    document.getElementById('app-container').style.display = 'none';
-}
 
 // Show main app
 function showApp() {
-    document.getElementById('login-screen').style.display = 'none';
-    document.getElementById('app-container').style.display = 'flex';
+    const appContainer = document.getElementById('app-container');
+    if (appContainer) appContainer.style.display = 'flex';
     if (!conversationState.meetingScheduled) {
         showGreeting();
+    }
+}
+
+// Resolve the viewer's IANA timezone (e.g. "Europe/London"); sent to the
+// backend so suggested times are generated and displayed in this zone.
+function getBrowserTimeZone() {
+    try {
+        return Intl.DateTimeFormat().resolvedOptions().timeZone || null;
+    } catch (e) {
+        return null;
+    }
+}
+
+// Short timezone label for a Date (e.g. "GMT+1", "EDT") in the viewer's zone.
+function getTimeZoneLabel(date) {
+    try {
+        const parts = new Intl.DateTimeFormat('en-US', { timeZoneName: 'short' }).formatToParts(date);
+        const tz = parts.find(p => p.type === 'timeZoneName');
+        return tz ? tz.value : '';
+    } catch (e) {
+        return '';
     }
 }
 
@@ -67,13 +70,9 @@ function getApiHeaders() {
     return headers;
 }
 
-// Handle 401 Unauthorized errors - clear token and show login
+// Recover from an unexpected auth error by resetting the conversation and
+// restarting the greeting. (The app no longer has a login gate.)
 async function handle401Error() {
-    // Clear invalid token
-    authToken = null;
-    sessionStorage.removeItem('authToken');
-    isAuthenticated = false;
-    
     // Reset conversation state
     conversationState = {
         step: 'greeting',
@@ -87,63 +86,16 @@ async function handle401Error() {
         rejectedTimes: [],
         fetchRetryCount: 0
     };
-    
+
     // Clear chat messages
     const chatMessages = document.getElementById('chat-messages');
     if (chatMessages) {
         chatMessages.innerHTML = '';
         chatMessages.classList.remove('no-scroll');
     }
-    
-    // Show login screen again
-    showLogin();
-}
 
-// Handle login
-async function handleLogin(event) {
-    if (event) {
-        event.preventDefault();
-    }
-    const passwordInput = document.getElementById('password-input');
-    const password = passwordInput.value;
-    const errorDiv = document.getElementById('login-error');
-    
-    // Clear previous error
-    errorDiv.style.display = 'none';
-    errorDiv.textContent = '';
-    
-    try {
-        const response = await fetch(`${getApiBaseUrl()}/api/login`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ password: password })
-        });
-        
-        if (!response.ok) {
-            if (response.status === 401) {
-                throw new Error('Incorrect password');
-            }
-            throw new Error('Login failed');
-        }
-        
-        const data = await response.json();
-        authToken = data.token;
-        isAuthenticated = true;
-        
-        // Store token in sessionStorage (cleared when browser closes)
-        sessionStorage.setItem('authToken', authToken);
-        
-        // Show the app
-        showApp();
-        
-    } catch (error) {
-        errorDiv.textContent = error.message || 'Login failed. Please try again.';
-        errorDiv.style.display = 'block';
-        passwordInput.value = '';
-        passwordInput.focus();
-    }
+    // Restart the conversation
+    showApp();
 }
 
 // Show/hide the back button
@@ -344,7 +296,8 @@ async function processBooking() {
                 meeting_type: conversationState.isOnline ? 'online' : 'in-person',
                 meeting_description: conversationState.purpose,
                 duration_minutes: conversationState.duration,
-                skip_llm_formatting: true // Skip LLM - frontend generates its own message from suggestions
+                skip_llm_formatting: true, // Skip LLM - frontend generates its own message from suggestions
+                timezone: getBrowserTimeZone()
             })
         });
         
@@ -468,12 +421,14 @@ function selectTimeSlot(index) {
     acceptSuggestion(slot.start_iso, slot.end_iso);
 }
 
-// Format time range for display
+// Format time range for display (times shown in the viewer's local timezone,
+// with a short timezone label so it's always clear which zone is meant)
 function formatTimeRange(startDate, endDate) {
     const options = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' };
     const startStr = startDate.toLocaleDateString('en-US', options);
     const endStr = endDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-    return `${startStr} - ${endStr}`;
+    const tzLabel = getTimeZoneLabel(startDate);
+    return tzLabel ? `${startStr} - ${endStr} ${tzLabel}` : `${startStr} - ${endStr}`;
 }
 
 // Accept suggestion
@@ -554,7 +509,8 @@ async function createEvent(startIso, endIso, attendeeEmail, attendeeName) {
                 location: conversationState.suggestedLocation || null,
                 attendee_email: attendeeEmail,
                 attendee_name: attendeeName || null,
-                meeting_description: conversationState.purpose || null
+                meeting_description: conversationState.purpose || null,
+                timezone: getBrowserTimeZone()
             })
         });
         
@@ -653,7 +609,8 @@ async function fetchMoreSuggestions() {
                 meeting_description: conversationState.purpose,
                 duration_minutes: conversationState.duration,
                 rejected_times: conversationState.suggestedTimes.map(t => ({ start_iso: t.start_iso, end_iso: t.end_iso })), // Exclude ALL previously seen times
-                skip_llm_formatting: true // Skip LLM to avoid "I understand" messages
+                skip_llm_formatting: true, // Skip LLM to avoid "I understand" messages
+                timezone: getBrowserTimeZone()
             })
         });
         
@@ -716,12 +673,14 @@ async function fetchMoreSuggestions() {
     }
 }
 
-// Format suggestion time for display
+// Format suggestion time for display (times shown in the viewer's local
+// timezone, with a short timezone label appended)
 function formatSuggestionTime(startDate, endDate) {
     const options = { weekday: 'long', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' };
     const startStr = startDate.toLocaleDateString('en-US', options);
     const endStr = endDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-    return `${startStr} - ${endStr}`;
+    const tzLabel = getTimeZoneLabel(startDate);
+    return tzLabel ? `${startStr} - ${endStr} ${tzLabel}` : `${startStr} - ${endStr}`;
 }
 
 // Custom time input functions removed - users can only accept/reject suggested times
@@ -764,7 +723,8 @@ async function submitFollowUp() {
             headers: getApiHeaders(),
             body: JSON.stringify({
                 query: query,
-                conversation_history: conversationState.conversationHistory.slice(0, -1)
+                conversation_history: conversationState.conversationHistory.slice(0, -1),
+                timezone: getBrowserTimeZone()
             })
         });
         

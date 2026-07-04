@@ -5,7 +5,24 @@ Implements complex preference logic for suggesting available meeting times.
 
 import datetime
 from typing import List, Dict, Optional, Tuple
+from zoneinfo import ZoneInfo
 import re
+
+def resolve_timezone(tz) -> datetime.tzinfo:
+    """
+    Resolve a timezone to a tzinfo object.
+
+    Accepts an IANA timezone name (e.g. "Europe/London"), a tzinfo instance, or
+    None. Falls back to UTC for None or unrecognized values.
+    """
+    if tz is None:
+        return datetime.timezone.utc
+    if isinstance(tz, datetime.tzinfo):
+        return tz
+    try:
+        return ZoneInfo(str(tz))
+    except Exception:
+        return datetime.timezone.utc
 
 def format_iso_datetime(dt: datetime.datetime) -> str:
     """
@@ -124,15 +141,21 @@ async def suggest_online_times(
     end_date: datetime.datetime,
     mcp_post_func,
     calendar_email: str = None,
-    rejected_times: set = None
+    rejected_times: set = None,
+    local_tz=None
 ) -> List[Dict[str, str]]:
     """
     Suggest times for online meetings based on preferences.
-    
+
     Returns list of suggested time slots with ISO start/end times.
+
+    Wall-clock preference times (e.g. 6:00 PM) are interpreted in ``local_tz``
+    (an IANA name or tzinfo; defaults to UTC) so the returned ISO instants are
+    correct for that zone.
     """
     suggestions = []
-    
+    zone = resolve_timezone(local_tz)
+
     # Get current time to ensure we don't suggest past times
     now = datetime.datetime.now(datetime.timezone.utc)
     
@@ -261,7 +284,7 @@ async def suggest_online_times(
                     suggested_time = datetime.datetime.combine(
                         check_date,
                         datetime.time(hour, minute)
-                    ).replace(tzinfo=datetime.timezone.utc)
+                    ).replace(tzinfo=zone)
                     slot_end = suggested_time + datetime.timedelta(minutes=duration_minutes)
                     
                     # Ensure it's in the future and within preferred hours
@@ -303,7 +326,7 @@ async def suggest_online_times(
         saturday_time = datetime.datetime.combine(
             saturday_date,
             datetime.time(10, 30)  # 10:30 AM
-        ).replace(tzinfo=datetime.timezone.utc)
+        ).replace(tzinfo=zone)
         slot_end = saturday_time + datetime.timedelta(minutes=duration_minutes)
         
         # Ensure it's in the future
@@ -341,17 +364,23 @@ async def suggest_inperson_times(
     end_date: datetime.datetime,
     mcp_post_func,
     calendar_email: str = None,
-    rejected_times: set = None
+    rejected_times: set = None,
+    local_tz=None
 ) -> Tuple[List[Dict[str, str]], Optional[str]]:
     """
     Suggest times for in-person meetings based on preferences.
-    
+
     Returns (list of suggested time slots, suggested_location).
+
+    Wall-clock preference times (lunch 12 PM, dinner 6:30 PM, etc.) are
+    interpreted in ``local_tz`` (an IANA name or tzinfo; defaults to UTC) so the
+    returned ISO instants are correct for that zone.
     """
     suggestions = []
     location = None
     is_friendly = is_friendly_meeting(description)
-    
+    zone = resolve_timezone(local_tz)
+
     # Get current time to ensure we don't suggest past times
     now = datetime.datetime.now(datetime.timezone.utc)
     
@@ -369,7 +398,7 @@ async def suggest_inperson_times(
             lunch_time = datetime.datetime.combine(
                 check_date,
                 datetime.time(12, 0)
-            ).replace(tzinfo=datetime.timezone.utc)
+            ).replace(tzinfo=zone)
             lunch_end = lunch_time + datetime.timedelta(minutes=duration_minutes)
             
             # Only suggest if in the future
@@ -384,14 +413,11 @@ async def suggest_inperson_times(
                             "reason": f"Lunch time on {check_date.strftime('%A, %B %d')}"
                         })
             
-            # Dinner time (6:30 PM+)
-            # IMPORTANT: Create time in UTC, but this represents 6:30 PM in the user's local timezone
-            # We need to check what timezone the calendar events are in
-            # For now, assume events are in UTC (Google Calendar API returns times in UTC)
+            # Dinner time (6:30 PM+), interpreted in the caller's local timezone.
             dinner_time = datetime.datetime.combine(
                 check_date,
                 datetime.time(18, 30)
-            ).replace(tzinfo=datetime.timezone.utc)
+            ).replace(tzinfo=zone)
             dinner_end = dinner_time + datetime.timedelta(minutes=duration_minutes)
             
             # Only suggest if in the future
@@ -424,7 +450,7 @@ async def suggest_inperson_times(
             coffee_time = datetime.datetime.combine(
                 check_date,
                 datetime.time(16, 0)  # 4:00 PM
-            ).replace(tzinfo=datetime.timezone.utc)
+            ).replace(tzinfo=zone)
             coffee_end = coffee_time + datetime.timedelta(minutes=duration_minutes)
             
             # Only suggest if in the future
@@ -456,7 +482,7 @@ async def suggest_inperson_times(
                 evening_time = datetime.datetime.combine(
                     check_date,
                     datetime.time(19, 30)
-                ).replace(tzinfo=datetime.timezone.utc)
+                ).replace(tzinfo=zone)
                 evening_end = evening_time + datetime.timedelta(minutes=duration_minutes)
                 
                 # Only suggest if in the future
@@ -485,7 +511,7 @@ async def suggest_inperson_times(
                         business_time = datetime.datetime.combine(
                             check_date,
                             datetime.time(hour, 0)
-                        ).replace(tzinfo=datetime.timezone.utc)
+                        ).replace(tzinfo=zone)
                         business_end = business_time + datetime.timedelta(minutes=duration_minutes)
                         
                         # Only suggest if in the future
